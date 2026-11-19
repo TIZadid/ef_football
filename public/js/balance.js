@@ -22,6 +22,8 @@
 //     the best defender when keepers differ
 //   - position coverage (wing, mid, striker) balanced
 //   - players who prefer GK spread across the teams
+//   - players with unknown (empty) stats spread across the teams, so neither
+//     team carries all the guesswork
 
 export const POSITIONS = ['GK', 'CB', 'WING', 'MID', 'ST'];
 
@@ -38,6 +40,7 @@ const W = {
   weakKeeperBestDefender: 3,
   bench: 0.5, // whole-team balance, relative to the starting line-ups
   gkSpread: 4,
+  unknown: 3, // per fully-unknown player of difference between the teams
 };
 
 const EXHAUSTIVE_LIMIT = 18;
@@ -46,6 +49,9 @@ export const plays = (p, pos) => (p.pos === pos ? 1 : p.alt === pos ? 0.5 : 0);
 export const isCB = (p) => p.def === 3 || plays(p, 'CB') > 0;
 export const isMid = (p) => plays(p, 'MID') > 0;
 const overall = (p) => p.att + p.def + p.phy + p.fb;
+// 0 for a fully rated player, 1 when every stat and the position are empty.
+// `empty` lists the stats the caller filled in with a stand-in value.
+export const unknown = (p) => ((p.empty?.length ?? 0) + (p.pos == null ? 1 : 0)) / 6;
 
 function pickKeeper(team, pinned) {
   if (!team.length) return null;
@@ -89,6 +95,7 @@ export function teamStats(team, keeper) {
     wing: 0, mid: 0, st: 0,
     cbs: 0, mids: 0, maxDef: 0,
     gkFans: team.filter((p) => p.pos === 'GK').length,
+    unknown: team.reduce((sum, p) => sum + unknown(p), 0),
   };
   for (const p of team) {
     if (p === keeper) continue;
@@ -127,6 +134,7 @@ function score(ups, teams, useKeepers) {
   let cost = pairCost(start[0], start[1], useKeepers);
   if (ups[0].subs.length || ups[1].subs.length) cost += W.bench * pairCost(full[0], full[1], useKeepers);
   if (useKeepers) cost += W.gkSpread * Math.max(0, Math.abs(full[0].gkFans - full[1].gkFans) - 1);
+  cost += W.unknown * (Math.abs(full[0].unknown - full[1].unknown) + 0.5 * Math.abs(start[0].unknown - start[1].unknown));
   const violations = {
     cb: (start[0].cbs < 1) + (start[1].cbs < 1),
     mid: (start[0].mids < 1) + (start[1].mids < 1),

@@ -24,18 +24,35 @@ const RATINGS = [
 const POS_LABEL = { GK: 'Keeper', CB: 'Centre-back', WING: 'Winger', MID: 'Midfield', ST: 'Striker' };
 const FORMATS = [5, 6, 7, 8, 9, 11];
 const DEFAULT_FORMAT = 5;
-const TEAM_NAMES = ['Lime', 'Orange'];
+const TEAM_NAMES = ['Black', 'White'];
 
 // Players saved before positions existed used wing / central / both.
 const LEGACY_POS = { wing: ['WING', null], central: ['MID', null], both: ['MID', 'WING'] };
 // Any stat can be left empty (null), e.g. for a guest nobody knows yet. Empty
-// stats count as average, and an empty position never fills a CB or MID slot.
+// stats count as tonight's average, an empty position never fills a CB or MID
+// slot, and the algorithm spreads players with empty stats across the teams.
 const DEFAULTS = { att: 2, def: 2, phy: 2, fb: 2, gk: 1 };
 const STAT_KEYS = Object.keys(DEFAULTS);
 const isEmpty = (p, k) => p[k] === null;
 const hasEmpty = (p) => STAT_KEYS.some((k) => isEmpty(p, k)) || p.pos === null;
-// A copy with empty stats filled in, for the balancing algorithm.
-const resolved = (p) => ({ ...p, ...Object.fromEntries(STAT_KEYS.map((k) => [k, p[k] ?? DEFAULTS[k]])), empty: STAT_KEYS.filter((k) => isEmpty(p, k)) });
+
+// Average of each stat among the given players who have it rated.
+function groupAverages(players) {
+  return Object.fromEntries(STAT_KEYS.map((k) => {
+    const known = players.map((p) => p[k]).filter((v) => v !== null);
+    return [k, known.length ? known.reduce((a, b) => a + b, 0) / known.length : DEFAULTS[k]];
+  }));
+}
+
+// Copies with empty stats filled in, for the balancing algorithm.
+function resolveAll(players) {
+  const avg = groupAverages(players);
+  return players.map((p) => ({
+    ...p,
+    ...Object.fromEntries(STAT_KEYS.map((k) => [k, p[k] ?? avg[k]])),
+    empty: STAT_KEYS.filter((k) => isEmpty(p, k)),
+  }));
+}
 
 function normalise(p) {
   // null = deliberately empty; missing = an old record, use the default.
@@ -73,7 +90,7 @@ const buzz = (pattern) => navigator.vibrate && navigator.vibrate(pattern);
 
 const everyone = () => [...state.pool, ...state.session.guests];
 const byId = (id) => everyone().find((p) => p.id === id);
-const playing = () => state.session.picked.map(byId).filter(Boolean).map(resolved);
+const playing = () => resolveAll(state.session.picked.map(byId).filter(Boolean));
 const isPlaying = (id) => state.session.picked.includes(id);
 
 function save() {
@@ -498,7 +515,8 @@ function runSplit(exclude = null) {
 
 function currentResult() {
   const r = state.session.result;
-  const teams = r.teams.map((ids) => ids.map((id) => resolved(byId(id))));
+  const all = new Map(resolveAll(r.teams.flat().map(byId)).map((p) => [p.id, p]));
+  const teams = r.teams.map((ids) => ids.map((id) => all.get(id)));
   const ev = evaluate(teams[0], teams[1], { ...balanceOpts(), starters: r.starters, goal: r.goal });
   const format = state.session.format;
   ev.lineups.forEach((u, t) => {
@@ -549,11 +567,11 @@ function result() {
         ${rows.map(([k, va, vb]) => {
           const max = Math.max(va, vb, 1);
           return `<div class="cmp">
-            <span class="v lime">${va}</span>
+            <span class="v">${Math.round(va)}</span>
             <span class="track"><i style="--w:${(va / max) * 100}%"></i></span>
             <span class="k">${k}</span>
             <span class="track b"><i style="--w:${(vb / max) * 100}%"></i></span>
-            <span class="v orange">${vb}</span>
+            <span class="v">${Math.round(vb)}</span>
           </div>`;
         }).join('')}
       </div>
@@ -629,7 +647,7 @@ function openEditSheet(id, body, paint) {
       ${useKeepers && starting && !isGk ? '<button class="btn paper small" data-act="goal">🧤 Put in goal</button>' : ''}
       ${starting ? '<button class="btn paper small" data-act="bench">Bench</button>' : ''}
       ${canStart ? '<button class="btn paper small" data-act="start">Start</button>' : ''}
-      <button class="btn small ${o ? 'orange' : ''}" data-act="move">Move to ${TEAM_NAMES[o]} →</button>
+      <button class="btn small team-btn ${o ? 'white' : 'black'}" data-act="move">Move to ${TEAM_NAMES[o]} →</button>
     </div>
     <p class="mono sheet-label">Swap with ${TEAM_NAMES[o]}</p>
     <div class="swap-grid ${o ? 'b' : 'a'}">${r.teams[o].map((x) => chip(x)).join('')}</div>

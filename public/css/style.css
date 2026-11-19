@@ -306,10 +306,13 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 }
 .team { position: relative; }
 .team header {
-  padding: 12px 12px 10px; color: var(--ink); background: var(--lime);
+  padding: 12px 12px 10px; color: var(--paper);
+  /* black bib: charcoal with a woven pinstripe so it shows on the black page */
+  background: repeating-linear-gradient(135deg, #1d211e 0 8px, #151816 8px 16px);
+  box-shadow: inset 0 0 0 2px rgba(236, 234, 223, 0.55);
   clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
 }
-.team.b header { background: var(--orange); clip-path: polygon(0 0, 100% 0, 100% 100%, 14px 100%); text-align: right; }
+.team.b header { background: var(--paper); color: var(--ink); box-shadow: none; clip-path: polygon(0 0, 100% 0, 100% 100%, 14px 100%); text-align: right; }
 .team header h2 { font-size: clamp(30px, 8vw, 44px); }
 .team header .mono { font-size: 10px; display: block; opacity: 0.75; }
 .team ol { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
@@ -344,10 +347,12 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .cmp .k { font-family: var(--mono); font-size: 10px; text-align: center; color: var(--muted); letter-spacing: 0.08em; }
 .cmp .track { height: 10px; background: var(--line); position: relative; overflow: hidden; }
 .cmp .track i {
-  position: absolute; top: 0; bottom: 0; right: 0; background: var(--lime);
+  position: absolute; top: 0; bottom: 0; right: 0;
+  background: repeating-linear-gradient(135deg, #8c928d 0 3px, #4d524e 3px 6px);
+  box-shadow: inset 0 0 0 1px #a3a9a4;
   width: var(--w); transition: width 0.8s var(--ease-out);
 }
-.cmp .track.b i { left: 0; right: auto; background: var(--orange); }
+.cmp .track.b i { left: 0; right: auto; background: var(--paper); box-shadow: none; }
 .warn {
   padding: 10px 12px; background: rgba(255, 91, 31, 0.14); border-left: 5px solid var(--orange);
   font-size: 14px; margin: 8px 0;
@@ -462,8 +467,10 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
   transition: transform 0.2s var(--ease-spring), background 0.15s;
 }
 .swap-chip small { font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; opacity: 0.6; }
-.swap-grid.a .swap-chip { border-left-color: var(--lime-deep); }
-.swap-grid.b .swap-chip { border-left-color: var(--orange); }
+.swap-grid.a .swap-chip { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.swap-grid.b .swap-chip { border-left-width: 2px; }
+.btn.team-btn.black { --bg: var(--ink); --fg: var(--paper); }
+.btn.team-btn.white { --bg: #fff; --fg: var(--ink); box-shadow: inset 0 0 0 2px var(--ink); }
 .swap-chip:active { transform: scale(0.94); background: var(--lime); }
 
 /* ---------- position picker ---------- */

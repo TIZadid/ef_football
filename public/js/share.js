@@ -3,7 +3,7 @@
 const COLORS = {
   turf1: '#040605', turf2: '#070a08', lime: '#c8f53a', orange: '#ff5b1f', paper: '#eceadf', ink: '#0a0d0b',
 };
-const DOTS = ['🟢', '🟠'];
+const DOTS = ['⚫', '⚪'];
 
 // Keeper first, then the other starters.
 const starting = (u) => (u.keeper ? [u.keeper, ...u.starters.filter((p) => p !== u.keeper)] : u.starters);
@@ -93,9 +93,11 @@ export async function renderShareImage({ lineups, names, balance, date, format }
   const colW = (W - 64 * 2 - 24) / 2;
   teams.forEach((team, t) => {
     const x = 64 + t * (colW + 24);
-    const color = t ? COLORS.orange : COLORS.lime;
-    slant(ctx, x, 380, colW, 120, 26, color, t === 1);
-    ctx.fillStyle = COLORS.ink;
+    // Black bib: charcoal panel with a light outline; white bib: paper.
+    const color = t ? COLORS.paper : '#7d837e';
+    slant(ctx, x, 380, colW, 120, 26, COLORS.paper, t === 1);
+    if (!t) slant(ctx, x + 3, 383, colW - 6, 114, 24, '#171a18', false);
+    ctx.fillStyle = t ? COLORS.ink : COLORS.paper;
     ctx.font = '700 20px "Space Mono", monospace';
     ctx.textAlign = t ? 'right' : 'left';
     const tx = t ? x + colW - 24 : x + 24;

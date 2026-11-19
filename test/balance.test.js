@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { balance, evaluate, lineup, BalanceError, isCB, isMid } from '../public/js/balance.js';
+import { balance, evaluate, lineup, BalanceError, isCB, isMid, unknown } from '../public/js/balance.js';
 
 let seed = 1;
 const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
@@ -149,4 +149,28 @@ test('unrated guests (no position, average stats) never fill the CB or MID slot'
     assert.ok(u.starters.some((p) => p !== u.keeper && isCB(p)));
     assert.ok(u.starters.some((p) => p !== u.keeper && isMid(p)));
   }
+});
+
+const blank = (id) => ({ id, name: id, att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: null, alt: null, empty: ['att', 'def', 'phy', 'fb', 'gk'] });
+
+test('fully unknown players are split across the teams', () => {
+  for (let k = 0; k < 15; k++) {
+    const r = balance([...squad.slice(0, 8), blank('u1'), blank('u2')], { rng });
+    assert.notEqual(sideOf(r, 'u1'), sideOf(r, 'u2'));
+  }
+});
+
+test('four unknown players split two and two, in a bigger group too', () => {
+  for (let k = 0; k < 5; k++) {
+    const r = balance([...squad, blank('u1'), blank('u2'), blank('u3'), blank('u4')], { rng });
+    const onA = ['u1', 'u2', 'u3', 'u4'].filter((id) => sideOf(r, id) === 0).length;
+    assert.equal(onA, 2);
+  }
+});
+
+test('partly rated players count as partly unknown', () => {
+  const half = { ...blank('h'), att: 3, pos: 'ST', empty: ['def', 'phy', 'fb'] };
+  assert.equal(unknown(half), 0.5);
+  assert.equal(unknown(blank('b')), 1);
+  assert.equal(unknown(squad[0]), 0);
 });
