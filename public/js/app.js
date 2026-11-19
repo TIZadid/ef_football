@@ -1,5 +1,5 @@
 import {
-  balance, evaluate, BalanceError, POSITIONS, isCB, suggestKeepers, keeperScore,
+  balance, evaluate, lineup, BalanceError, POSITIONS, isCB, suggestKeepers, keeperScore,
 } from './balance.js';
 import { renderShareImage, shareText } from './share.js';
 import { mergeDocs, FIELDS, RECENT_SIZE } from './sync.js';
@@ -229,6 +229,7 @@ async function pullState() {
     // The other device may not have moved on to the new week yet.
     const before = JSON.stringify(state.session.result);
     rollover();
+    syncTeamsWithPicks();
     if (JSON.stringify(state.session.result) !== before) { save(); changed = true; }
     setSync('synced');
     if (changed) refreshScreen();
@@ -727,6 +728,7 @@ function ensureGuest(id) {
 
 function pick() {
   const s = state.session;
+  announceTeamChanges(syncTeamsWithPicks());
   const guests = allGuests();
   // Regulars always show; guests only when picked or when "Show guests" is on.
   const list = [...state.pool.slice().sort(byName), ...guests.filter((g) => isPlaying(g.id) || s.showRecent)];
@@ -789,6 +791,7 @@ function pick() {
   };
   const setPicked = (ids) => {
     s.picked = ids;
+    announceTeamChanges(syncTeamsWithPicks());
     el.querySelectorAll('.ticket').forEach((t) => {
       t.classList.toggle('on', isPlaying(t.dataset.id));
       t.setAttribute('aria-pressed', isPlaying(t.dataset.id));
@@ -853,7 +856,7 @@ function pickBanner() {
     return `<div class="banner ok"><span>🔒 This week's teams are locked in. Unlock them on the Teams screen to change who's in.</span><button class="chip" data-go="result">Open teams</button></div>`;
   }
   if (status.state === 'ready') {
-    return `<div class="banner ok"><span>✓ Teams for this week are set. Change the picks and split again to remake them.</span><button class="chip" data-go="result">View teams</button></div>`;
+    return `<div class="banner ok"><span>✓ Teams are set. Changes here update them automatically. Split again for a completely new split.</span><button class="chip" data-go="result">View teams</button></div>`;
   }
   if (status.state === 'stale') {
     return `<div class="banner warn"><span>⚠ Players changed since the teams were made (${changeText(status)}). Split again to update.</span><button class="chip" data-go="result">Old teams</button></div>`;
@@ -862,6 +865,72 @@ function pickBanner() {
 }
 
 const isLocked = () => !!state.session.result?.locked && teamsStatus().state !== 'none';
+
+// Keep the teams in step with who's in: removed players leave, new players
+// join whichever team stays most balanced. Returns what changed, or null.
+function syncTeamsWithPicks() {
+  const s = state.session;
+  const r = s.result;
+  if (!r || r.locked || teamsStatus().state !== 'stale') return null;
+  const picked = new Set(s.picked);
+  const before = r.teams.map((t) => t.slice());
+  const removed = before.flat().filter((id) => !picked.has(id));
+  pushUndo();
+  r.teams = r.teams.map((t) => t.filter((id) => picked.has(id)));
+  const balanceOf = (teams) => {
+    const all = new Map(resolveAll(teams.flat().map(byId).filter(Boolean)).map((p) => [p.id, p]));
+    const [A, B] = teams.map((t) => t.map((id) => all.get(id)).filter(Boolean));
+    let score = evaluate(A, B, balanceOpts()).balance;
+    // House rules come first.
+    const side = (id) => (teams[0].includes(id) ? 0 : teams[1].includes(id) ? 1 : -1);
+    for (const [x, y] of s.together) if (side(x) >= 0 && side(y) >= 0 && side(x) !== side(y)) score -= 50;
+    for (const [x, y] of s.apart) if (side(x) >= 0 && side(x) === side(y)) score -= 50;
+    return score;
+  };
+  const added = [];
+  for (const id of s.picked.filter((x) => !r.teams.flat().includes(x))) {
+    let best = null;
+    for (const t of [0, 1]) {
+      const trial = r.teams.map((x, i) => (i === t ? [...x, id] : x));
+      if (Math.abs(trial[0].length - trial[1].length) > 1) continue;
+      const score = balanceOf(trial);
+      if (!best || score > best.score) best = { t, score };
+    }
+    r.teams[best.t].push(id);
+    added.push([id, best.t]);
+  }
+  // Removals can leave the sizes lopsided: move whoever balances best.
+  while (Math.abs(r.teams[0].length - r.teams[1].length) > 1) {
+    const big = r.teams[0].length > r.teams[1].length ? 0 : 1;
+    let best = null;
+    for (const id of r.teams[big]) {
+      const trial = r.teams.map((x, i) => (i === big ? x.filter((y) => y !== id) : [...x, id]));
+      const score = balanceOf(trial);
+      if (!best || score > best.score) best = { id, score, trial };
+    }
+    r.teams = best.trial;
+    added.push([best.id, 1 - big]);
+  }
+  // The shown line-up is rebuilt for the new squads.
+  const all = new Map(resolveAll(r.teams.flat().map(byId)).map((p) => [p.id, p]));
+  const ups = r.teams.map((t) => lineup(t.map((id) => all.get(id)), balanceOpts()));
+  r.starters = ups.map((u) => u.starters.map((p) => p.id));
+  r.goal = ups.map((u) => u.keeper?.id ?? null);
+  r.signature = null;
+  r.edited = true;
+  save();
+  return { added, removed };
+}
+
+function announceTeamChanges(change) {
+  if (!change) return;
+  const name = (id) => byId(id)?.name ?? 'Player';
+  const parts = [
+    ...change.added.map(([id, t]) => `+${name(id)} → ${TEAM_NAMES[t]}`),
+    ...change.removed.map((id) => `−${name(id)}`),
+  ];
+  toast(`Teams updated: ${parts.slice(0, 3).join(', ')}${parts.length > 3 ? '…' : ''}`);
+}
 
 function startSplit() {
   if (isLocked()) return go('result');
@@ -1114,6 +1183,7 @@ function result() {
       ['Engine', a.eng, b.eng],
     ];
     body.innerHTML = `
+      ${r.edited && r.balance < 90 && !isLocked() ? `<div class="banner warn"><span>Changes made the teams less even (${r.balance}%). Regenerate for a fairer split.</span><button class="chip" data-resplit>Regenerate</button></div>` : ''}
       ${status.state === 'stale' ? `<div class="banner warn"><span>⚠ Who's in changed since these teams were made (${changeText(status)}).</span><button class="chip" data-resplit>Split again</button></div>` : ''}
       <div class="odds">
         <div class="odds-head">
@@ -1614,6 +1684,7 @@ async function openShareSheet() {
 removeDemoPlayers();
 prune();
 rollover();
+syncTeamsWithPicks();
 save();
 takeSnap();
 show(routeFromHash(), false);
