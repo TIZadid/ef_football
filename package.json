@@ -4,11 +4,7 @@
   "type": "module",
   "version": "0.1.0",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "npx -y serve public -l 8787",
     "test": "node --test test/*.test.js"
-  },
-  "devDependencies": {
-    "wrangler": "^4.165.0"
   }
 }

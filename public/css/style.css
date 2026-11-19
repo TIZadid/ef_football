@@ -383,7 +383,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .sheet.closing { animation: sheet-down 0.3s ease-in both; }
 @keyframes sheet-up { from { transform: translateY(100%); } }
 @keyframes sheet-down { to { transform: translateY(100%); } }
-.sheet h2 { font-size: 40px; margin: 14px 0 12px; }
+.sheet h2 { font-size: 40px; margin: 14px 52px 12px 0; overflow-wrap: anywhere; }
 .sheet .field { display: block; margin-bottom: 14px; }
 .sheet input[type="text"] {
   width: 100%; padding: 12px; border: 2px solid var(--ink); background: #fff; color: var(--ink);
@@ -410,6 +410,72 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .share-opts { display: grid; gap: 10px; }
 .share-preview { width: 100%; border: 2px solid var(--ink); margin-bottom: 12px; display: block; }
 
+
+/* ---------- format picker ---------- */
+.format {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 12px; background: var(--glass); border: 1.5px solid var(--line);
+}
+.format-opts { display: flex; gap: 6px; }
+.format-opts button {
+  width: 44px; height: 44px; font-family: var(--display); font-size: 20px;
+  border: 1.5px solid var(--line); transform: skewX(-10deg);
+  transition: background 0.2s, color 0.2s, transform 0.25s var(--ease-spring), border-color 0.2s;
+}
+.format-opts button:active { transform: skewX(-10deg) scale(0.88); }
+.format-opts button.on { background: var(--lime); color: var(--ink); border-color: var(--lime); transform: skewX(-10deg) scale(1.08); }
+.tally { display: flex; flex-direction: column; align-items: center; min-width: 64px; }
+.tally .mono { font-size: 10px; white-space: nowrap; }
+
+/* ---------- subs & editing ---------- */
+.bench-label { margin: 12px 4px 4px; font-size: 10px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.bench-label::after { content: ""; flex: 1; border-top: 1.5px dashed var(--line); }
+.team.b .bench-label { flex-direction: row-reverse; }
+.bench .slot { opacity: 0.72; background: rgba(6, 14, 9, 0.4); border-style: dotted; }
+.edit-hint {
+  display: flex; align-items: center; gap: 10px; margin: 14px 0 6px;
+  font-size: 14px; color: var(--muted);
+}
+.edit-hint span {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center;
+  background: var(--paper); color: var(--ink); transform: rotate(-8deg); font-size: 15px;
+}
+.slot { min-height: 46px; }
+.slot:active { transform: scale(0.96); }
+.regen { flex: 0 0 auto; }
+.regen .spin { display: inline-block; }
+
+.sheet-close {
+  position: absolute; right: 14px; top: 26px; width: 40px; height: 40px; border-radius: 50%;
+  border: 2px solid var(--ink); color: var(--ink); font-size: 16px;
+}
+.quick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.quick .btn { flex: 1 1 auto; }
+.sheet-label { margin: 18px 0 8px; font-size: 11px; opacity: 0.7; }
+.swap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.swap-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 10px 12px; min-height: 56px; text-align: left;
+  border: 2px solid var(--ink); background: #fff; color: var(--ink);
+  font-family: var(--display); font-size: 19px; text-transform: uppercase; line-height: 1.05;
+  border-left-width: 8px;
+  transition: transform 0.2s var(--ease-spring), background 0.15s;
+}
+.swap-chip small { font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; opacity: 0.6; }
+.swap-grid.a .swap-chip { border-left-color: var(--lime-deep); }
+.swap-grid.b .swap-chip { border-left-color: var(--orange); }
+.swap-chip:active { transform: scale(0.94); background: var(--lime); }
+
+/* ---------- position picker ---------- */
+.pos-block { margin-bottom: 6px; }
+.lbl-row { display: flex; align-items: baseline; justify-content: space-between; margin: 10px 0 6px; }
+.lbl-row b { font-family: var(--display); font-size: 20px; font-weight: 400; text-transform: uppercase; }
+.lbl-row small { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; opacity: 0.6; text-transform: uppercase; }
+.sheet .pos-seg { margin: 0; }
+.sheet .pos-seg button { font-size: 17px; padding: 12px 2px; min-height: 46px; }
+.sheet .pos-seg.alt button.on { background: var(--orange); color: var(--ink); }
+.sheet .pos-seg button[disabled] { opacity: 0.25; }
+
 /* ---------- toast ---------- */
 #toast {
   position: fixed; left: 50%; top: 18px; z-index: 80; pointer-events: none;
@@ -422,6 +488,10 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 #toast.show { transform: translate(-50%, 0) rotate(-2deg); visibility: visible; transition: transform 0.4s var(--ease-spring); }
 
 @media (max-width: 420px) {
+  .format { padding: 10px; }
+  .format-opts button { width: 38px; height: 42px; }
+  .rate .lbl small { display: none; }
+  .pips button { width: 42px; }
   .grid { grid-template-columns: 1fr 1fr; }
   .ticket .name { font-size: 21px; }
   .slot .nm { font-size: 16px; }
@@ -432,3 +502,6 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
   .ticker div { animation: none; }
 }
+
+/* Paper buttons on the paper-coloured sheet need an ink outline. */
+.sheet .quick .btn.paper { box-shadow: inset 0 0 0 2px var(--ink); --bg: #fff; }

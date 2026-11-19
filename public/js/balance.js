@@ -1,23 +1,29 @@
 // Team balancing.
 //
-// A player: { id, name, att, def, phy, fb, gk, pos: 'wing' | 'central' | 'both' }
-// Ratings are 1–3. def === 3 marks a centre-back (CB).
+// A player: { id, name, att, def, phy, fb, gk, pos, alt }
+//   ratings are 1–3; pos is the main position and alt an optional backup,
+//   each one of POSITIONS.
+//
+// Each team has a starting line-up of `format` players (5-a-side by default);
+// the rest are subs.
 //
 // Hard rules (always enforced, or the split is rejected):
 //   - team sizes differ by at most one
 //   - "together" pairs share a team, "apart" pairs don't
-//   - pinned keepers end up on different teams
-// Structural rules (enforced whenever any split can satisfy them; otherwise
-// the least-bad split wins and a warning is returned):
-//   - every team has an outfield CB
-//   - every team has an outfield central player (central or both)
-// Soft goals (minimised by the cost function):
+//   - pinned keepers end up on different teams, and start in goal
+// Structural rules for each starting line-up (enforced whenever any split can
+// satisfy them; otherwise the least-bad split wins and a warning is returned):
+//   - a CB: CB as main/backup position, or DEF 3
+//   - a central player: MID as main/backup position
+// Soft goals (minimised by the cost function), starting line-ups first and
+// whole teams second:
 //   - attack, defense, physicality, tracking back and overall strength balanced
 //   - the team with the weaker keeper gets the stronger defense, including
 //     the best defender when keepers differ
-//   - wing / central coverage balanced
+//   - position coverage (wing, mid, striker) balanced
+//   - players who prefer GK spread across the teams
 
-export const ATTRS = ['att', 'def', 'phy', 'fb'];
+export const POSITIONS = ['GK', 'CB', 'WING', 'MID', 'ST'];
 
 const W = {
   att: 1,
@@ -27,11 +33,19 @@ const W = {
   total: 1.2,
   gk: 1.5, // how much a keeper's rating counts toward the team's defense
   wing: 0.4,
-  central: 0.4,
+  mid: 0.4,
+  st: 0.4,
   weakKeeperBestDefender: 3,
+  bench: 0.5, // whole-team balance, relative to the starting line-ups
+  gkSpread: 4,
 };
 
-const EXHAUSTIVE_LIMIT = 20;
+const EXHAUSTIVE_LIMIT = 18;
+
+export const plays = (p, pos) => (p.pos === pos ? 1 : p.alt === pos ? 0.5 : 0);
+export const isCB = (p) => p.def === 3 || plays(p, 'CB') > 0;
+export const isMid = (p) => plays(p, 'MID') > 0;
+const overall = (p) => p.att + p.def + p.phy + p.fb;
 
 function pickKeeper(team, pinned) {
   if (!team.length) return null;
@@ -39,32 +53,49 @@ function pickKeeper(team, pinned) {
   if (pin) return pin;
   let best = team[0];
   for (const p of team) {
-    const out = (q) => q.att + q.def + q.phy + q.fb;
-    // Best keeper; on a tie, keep the stronger outfielder outfield.
-    if (p.gk > best.gk || (p.gk === best.gk && out(p) < out(best))) best = p;
+    const a = plays(p, 'GK'), b = plays(best, 'GK');
+    // GK preference, then GK rating; on a tie keep the stronger outfielder outfield.
+    if (a > b || (a === b && (p.gk > best.gk || (p.gk === best.gk && overall(p) < overall(best))))) best = p;
   }
   return best;
 }
 
-export function teamStats(team, { keeperMode = 'auto', keepers = [] } = {}) {
-  const useKeepers = keeperMode !== 'none';
-  const keeper = useKeepers ? pickKeeper(team, new Set(keepers)) : null;
+// Choose a team's starters: keeper, a CB, a MID, then the strongest of the rest.
+export function lineup(team, { format = 5, keeperMode = 'auto', keepers = [] } = {}) {
+  const keeper = keeperMode !== 'none' ? pickKeeper(team, new Set(keepers)) : null;
+  if (team.length <= format) return { starters: team.slice(), subs: [], keeper };
+  const starters = keeper ? [keeper] : [];
+  const rest = team.filter((p) => p !== keeper).sort((a, b) => overall(b) - overall(a));
+  const take = (fits, rank) => {
+    if (starters.length >= format || starters.some((p) => p !== keeper && fits(p))) return;
+    const cands = rest.filter(fits).sort((a, b) => rank(b) - rank(a));
+    if (!cands.length) return;
+    starters.push(cands[0]);
+    rest.splice(rest.indexOf(cands[0]), 1);
+  };
+  take(isCB, (p) => plays(p, 'CB') * 10 + p.def + overall(p) / 100);
+  take(isMid, (p) => plays(p, 'MID') * 10 + overall(p) / 100);
+  while (starters.length < format && rest.length) starters.push(rest.shift());
+  const chosen = new Set(starters);
+  return { starters, subs: team.filter((p) => !chosen.has(p)), keeper };
+}
+
+export function teamStats(team, keeper) {
   const s = {
     size: team.length,
     keeper,
     att: 0, def: 0, phy: 0, fb: 0,
     gk: keeper ? keeper.gk : 0,
-    wing: 0, central: 0,
-    cbs: 0, centrals: 0, maxDef: 0,
+    wing: 0, mid: 0, st: 0,
+    cbs: 0, mids: 0, maxDef: 0,
+    gkFans: team.filter((p) => p.pos === 'GK').length,
   };
   for (const p of team) {
     if (p === keeper) continue;
     s.att += p.att; s.def += p.def; s.phy += p.phy; s.fb += p.fb;
-    if (p.pos === 'wing') s.wing += 1;
-    else if (p.pos === 'central') s.central += 1;
-    else { s.wing += 0.5; s.central += 0.5; }
-    if (p.def === 3) s.cbs++;
-    if (p.pos !== 'wing') s.centrals++;
+    s.wing += plays(p, 'WING'); s.mid += plays(p, 'MID'); s.st += plays(p, 'ST');
+    if (isCB(p)) s.cbs++;
+    if (isMid(p)) s.mids++;
     if (p.def > s.maxDef) s.maxDef = p.def;
   }
   s.defense = s.def + W.gk * s.gk; // outfield defense plus the keeper behind it
@@ -72,7 +103,7 @@ export function teamStats(team, { keeperMode = 'auto', keepers = [] } = {}) {
   return s;
 }
 
-function score(a, b, useKeepers) {
+function pairCost(a, b, useKeepers) {
   let cost =
     W.att * Math.abs(a.att - b.att) +
     W.def * Math.abs(a.defense - b.defense) +
@@ -80,41 +111,67 @@ function score(a, b, useKeepers) {
     W.fb * Math.abs(a.fb - b.fb) +
     W.total * Math.abs(a.total - b.total) +
     W.wing * Math.abs(a.wing - b.wing) +
-    W.central * Math.abs(a.central - b.central);
+    W.mid * Math.abs(a.mid - b.mid) +
+    W.st * Math.abs(a.st - b.st);
   if (useKeepers && a.gk !== b.gk) {
     const [weak, strong] = a.gk < b.gk ? [a, b] : [b, a];
     if (weak.maxDef < strong.maxDef) cost += W.weakKeeperBestDefender;
   }
-  const violations = {
-    cb: (a.cbs < 1) + (b.cbs < 1),
-    central: (a.centrals < 1) + (b.centrals < 1),
-  };
-  return { cost, violations, structural: violations.cb + violations.central };
+  return cost;
 }
 
-// Score a given split. Used after manual swaps too.
+// Score a split whose line-ups are already chosen.
+function score(ups, teams, useKeepers) {
+  const start = ups.map((u) => teamStats(u.starters, u.keeper));
+  const full = teams.map((t, i) => teamStats(t, ups[i].keeper));
+  let cost = pairCost(start[0], start[1], useKeepers);
+  if (ups[0].subs.length || ups[1].subs.length) cost += W.bench * pairCost(full[0], full[1], useKeepers);
+  if (useKeepers) cost += W.gkSpread * Math.max(0, Math.abs(full[0].gkFans - full[1].gkFans) - 1);
+  const violations = {
+    cb: (start[0].cbs < 1) + (start[1].cbs < 1),
+    mid: (start[0].mids < 1) + (start[1].mids < 1),
+  };
+  return { cost, violations, structural: violations.cb + violations.mid, start, full };
+}
+
+const pct = (a, b) => Math.round((100 * Math.min(a.total, b.total)) / Math.max(1, a.total, b.total));
+
+// Score a split. For a hand-edited result pass `starters` ([idsA, idsB]) and
+// optionally `goal` ([idA | null, idB | null]) to fix who keeps.
 export function evaluate(teamA, teamB, opts = {}) {
-  const useKeepers = (opts.keeperMode ?? 'auto') !== 'none';
-  const a = teamStats(teamA, opts);
-  const b = teamStats(teamB, opts);
-  const { cost, violations } = score(a, b, useKeepers);
+  const keeperMode = opts.keeperMode ?? 'auto';
+  const useKeepers = keeperMode !== 'none';
+  const teams = [teamA, teamB];
+  const ups = teams.map((team, i) => {
+    if (!opts.starters) return lineup(team, opts);
+    const ids = new Set(opts.starters[i]);
+    const starters = team.filter((p) => ids.has(p.id));
+    const pinned = new Set([opts.goal?.[i], ...(opts.keepers ?? [])].filter(Boolean));
+    const keeper = useKeepers ? pickKeeper(starters, pinned) : null;
+    return { starters, subs: team.filter((p) => !ids.has(p.id)), keeper };
+  });
+  const { cost, violations, start, full } = score(ups, teams, useKeepers);
   const warnings = [];
-  if (violations.cb) warnings.push('Not enough centre-backs (DEF 3) for one per team.');
-  if (violations.central) warnings.push('Not enough central players for one per team.');
-  const together = opts.together ?? [];
-  const apart = opts.apart ?? [];
+  if (violations.cb) warnings.push('A starting line-up has no CB (CB position or DEF 3).');
+  if (violations.mid) warnings.push('A starting line-up has no MID.');
   const side = new Map();
   teamA.forEach((p) => side.set(p.id, 0));
   teamB.forEach((p) => side.set(p.id, 1));
-  for (const [x, y] of together) {
+  for (const [x, y] of opts.together ?? []) {
     if (side.has(x) && side.has(y) && side.get(x) !== side.get(y)) warnings.push('A "together" rule is broken.');
   }
-  for (const [x, y] of apart) {
+  for (const [x, y] of opts.apart ?? []) {
     if (side.has(x) && side.has(y) && side.get(x) === side.get(y)) warnings.push('An "apart" rule is broken.');
   }
-  // Headline number: how close the two teams' overall strength is.
-  const balance = Math.round((100 * Math.min(a.total, b.total)) / Math.max(1, a.total, b.total));
-  return { stats: [a, b], cost, balance, warnings };
+  return {
+    lineups: ups,
+    stats: start,
+    fullStats: full,
+    cost,
+    balance: pct(start[0], start[1]),
+    fullBalance: pct(full[0], full[1]),
+    warnings,
+  };
 }
 
 function signature(teamA, teamB) {
@@ -126,12 +183,13 @@ function signature(teamA, teamB) {
 export class BalanceError extends Error {}
 
 // Returns { teams: [A, B], ...evaluate(), options, signature }.
-// opts: together, apart (arrays of [idA, idB]), keepers (pinned ids, max 2),
+// opts: format (players per side on the pitch, default 5),
+//       together, apart (arrays of [idA, idB]), keepers (pinned ids, max 2),
 //       keeperMode ('auto' | 'none'), exclude (a signature to avoid repeating),
 //       rng (for tests), tolerance (how close to optimal a reshuffle may be).
 export function balance(players, opts = {}) {
   const {
-    together = [], apart = [], keepers = [], keeperMode = 'auto',
+    format = 5, together = [], apart = [], keepers = [], keeperMode = 'auto',
     exclude = null, rng = Math.random, tolerance = 0.75,
   } = opts;
   const n = players.length;
@@ -156,21 +214,26 @@ export function balance(players, opts = {}) {
   const sizeA = Math.floor(n / 2);
   const sizeB = n - sizeA;
   const useKeepers = keeperMode !== 'none';
-  const evalOpts = { keeperMode, keepers };
+  const upOpts = { format, keeperMode, keepers };
+
+  const scoreSides = (sides) => {
+    const teams = [[], []];
+    sides.forEach((s, i) => teams[s].push(players[i]));
+    const ups = teams.map((t) => lineup(t, upOpts));
+    return { teams, ...score(ups, teams, useKeepers) };
+  };
 
   let best = null; // { structural, cost }
   let pool = [];
   const consider = (sides) => {
-    const A = [], B = [];
-    sides.forEach((s, i) => (s ? B : A).push(players[i]));
-    const r = score(teamStats(A, evalOpts), teamStats(B, evalOpts), useKeepers);
+    const r = scoreSides(sides);
     if (!best || r.structural < best.structural || (r.structural === best.structural && r.cost < best.cost)) {
       const better = !best || r.structural < best.structural;
       best = { structural: r.structural, cost: r.cost };
       pool = better ? [] : pool.filter((c) => c.cost <= best.cost + tolerance);
     }
     if (r.structural === best.structural && r.cost <= best.cost + tolerance) {
-      pool.push({ A, B, cost: r.cost });
+      pool.push({ A: r.teams[0], B: r.teams[1], cost: r.cost });
       if (pool.length > 400) pool.sort((x, y) => x.cost - y.cost).length = 200;
     }
   };
@@ -195,40 +258,37 @@ export function balance(players, opts = {}) {
     };
     rec(0, 0, 0);
   } else {
-    localSearch(players, sizeA, checks, consider, rng, evalOpts, useKeepers);
+    localSearch(n, sizeA, checks, consider, scoreSides, rng);
   }
 
   if (!pool.length) throw new BalanceError('These rules can\'t all be satisfied. Remove a together/apart rule.');
 
-  pool.sort((x, y) => x.cost - y.cost);
   let options = pool.filter((c) => signature(c.A, c.B) !== exclude);
   if (!options.length) options = pool;
   const pick = options[Math.floor(rng() * options.length)];
-  // Stronger keeper side first isn't meaningful; randomise colours.
+  // Colours carry no meaning; randomise which team gets which.
   const teams = rng() < 0.5 ? [pick.A, pick.B] : [pick.B, pick.A];
   return {
     teams,
-    ...evaluate(teams[0], teams[1], { ...evalOpts, together, apart }),
+    ...evaluate(teams[0], teams[1], { ...upOpts, together, apart }),
     options: pool.length,
     signature: signature(teams[0], teams[1]),
   };
 }
 
 // Large groups: random valid starts improved by pairwise swaps.
-function localSearch(players, sizeA, checks, consider, rng, evalOpts, useKeepers) {
-  const n = players.length;
+function localSearch(n, sizeA, checks, consider, scoreSides, rng) {
   const valid = (sides) => checks.every((list, i) => list.every(([j, same]) => (sides[i] === sides[j]) === same));
   const costOf = (sides) => {
-    const A = [], B = [];
-    sides.forEach((s, i) => (s ? B : A).push(players[i]));
-    const r = score(teamStats(A, evalOpts), teamStats(B, evalOpts), useKeepers);
+    if (!valid(sides)) return Infinity;
+    const r = scoreSides(sides);
     return r.structural * 100 + r.cost;
   };
-  for (let restart = 0; restart < 60; restart++) {
-    const order = players.map((_, i) => i).sort(() => rng() - 0.5);
+  for (let restart = 0; restart < 30; restart++) {
+    const order = Array.from({ length: n }, (_, i) => i).sort(() => rng() - 0.5);
     const sides = new Array(n).fill(1);
     order.slice(0, sizeA).forEach((i) => (sides[i] = 0));
-    let cur = valid(sides) ? costOf(sides) : Infinity;
+    let cur = costOf(sides);
     let improved = true;
     while (improved) {
       improved = false;
@@ -236,7 +296,7 @@ function localSearch(players, sizeA, checks, consider, rng, evalOpts, useKeepers
         for (let j = 0; j < n; j++) {
           if (sides[i] !== 0 || sides[j] !== 1) continue;
           sides[i] = 1; sides[j] = 0;
-          const c = valid(sides) ? costOf(sides) : Infinity;
+          const c = costOf(sides);
           if (c < cur) { cur = c; improved = true; }
           else { sides[i] = 0; sides[j] = 1; }
         }

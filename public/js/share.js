@@ -5,13 +5,15 @@ const COLORS = {
 };
 const DOTS = ['🟢', '🟠'];
 
-const ordered = (team, keeper) => (keeper ? [keeper, ...team.filter((p) => p !== keeper)] : team);
+// Keeper first, then the other starters.
+const starting = (u) => (u.keeper ? [u.keeper, ...u.starters.filter((p) => p !== u.keeper)] : u.starters);
 
-export function shareText({ teams, keepers, names, balance, date }) {
-  const lines = [`⚽ GAME ON · ${date}`, ''];
-  teams.forEach((team, t) => {
-    lines.push(`${DOTS[t]} TEAM ${names[t].toUpperCase()} (${team.length})`);
-    ordered(team, keepers[t]).forEach((p) => lines.push(`${p === keepers[t] ? '🧤' : '•'} ${p.name}`));
+export function shareText({ lineups, names, balance, date, format }) {
+  const lines = [`⚽ GAME ON · ${date} · ${format}-a-side`, ''];
+  lineups.forEach((u, t) => {
+    lines.push(`${DOTS[t]} TEAM ${names[t].toUpperCase()}`);
+    starting(u).forEach((p) => lines.push(`${p === u.keeper ? '🧤' : '•'} ${p.name}`));
+    if (u.subs.length) lines.push(`🔁 Subs: ${u.subs.map((p) => p.name).join(', ')}`);
     lines.push('');
   });
   lines.push(`⚖️ ${balance}% balanced`);
@@ -37,7 +39,9 @@ function slant(ctx, x, y, w, hgt, cut, color, flip = false) {
   ctx.fill();
 }
 
-export async function renderShareImage({ teams, keepers, names, balance, date }) {
+export async function renderShareImage({ lineups, names, balance, date, format }) {
+  const teams = lineups.map((u) => [...starting(u), ...u.subs]);
+  const keepers = lineups.map((u) => u.keeper);
   await Promise.all([
     document.fonts.load('160px Anton'),
     document.fonts.load('700 24px "Space Mono"'),
@@ -46,7 +50,8 @@ export async function renderShareImage({ teams, keepers, names, balance, date })
   const W = 1080;
   const ROW = 78;
   const rows = Math.max(...teams.map((t) => t.length));
-  const H = Math.max(1350, 560 + rows * ROW + 230);
+  const hasSubs = lineups.some((u) => u.subs.length);
+  const H = Math.max(1350, 560 + rows * ROW + (hasSubs ? 60 : 0) + 230);
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
@@ -71,7 +76,7 @@ export async function renderShareImage({ teams, keepers, names, balance, date })
   ctx.fillStyle = COLORS.paper;
   ctx.font = '700 26px "Space Mono", monospace';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillText(`${date}  ·  ${teams[0].length} V ${teams[1].length}`, 64, 96);
+  ctx.fillText(`${date}  ·  ${format}-A-SIDE`, 64, 96);
   ctx.textAlign = 'right';
   ctx.fillStyle = COLORS.lime;
   ctx.fillText('● MATCHDAY', W - 64, 96);
@@ -94,22 +99,29 @@ export async function renderShareImage({ teams, keepers, names, balance, date })
     ctx.font = '700 20px "Space Mono", monospace';
     ctx.textAlign = t ? 'right' : 'left';
     const tx = t ? x + colW - 24 : x + 24;
-    ctx.fillText(`TEAM ${String(t + 1).padStart(2, '0')} · ${team.length} PLAYERS`, tx, 418);
+    ctx.fillText(`${lineups[t].starters.length} START${lineups[t].subs.length ? ` · ${lineups[t].subs.length} SUBS` : ''}`, tx, 418);
     ctx.font = '72px Anton, Impact, sans-serif';
     ctx.fillText(names[t].toUpperCase(), tx, 486);
 
-    ordered(team, keepers[t]).forEach((p, i) => {
-      const y = 528 + i * ROW;
-      ctx.fillStyle = 'rgba(6,14,9,0.72)';
+    const nStart = lineups[t].starters.length;
+    if (lineups[t].subs.length) {
+      ctx.font = '700 22px "Space Mono", monospace';
+      ctx.fillStyle = color;
+      ctx.fillText('SUBS', t ? x + colW - 8 : x + 8, 528 + nStart * ROW + 34);
+    }
+    team.forEach((p, i) => {
+      const sub = i >= nStart;
+      const y = 528 + i * ROW + (sub ? 60 : 0);
+      ctx.fillStyle = sub ? 'rgba(6,14,9,0.45)' : 'rgba(6,14,9,0.72)';
       ctx.fillRect(x, y, colW, ROW - 12);
       ctx.fillStyle = color;
       ctx.fillRect(t ? x + colW - 8 : x, y, 8, ROW - 12);
       const isKeeper = p === keepers[t];
       ctx.font = '42px Anton, Impact, sans-serif';
-      ctx.fillStyle = COLORS.paper;
+      ctx.fillStyle = sub ? 'rgba(236,234,223,0.7)' : COLORS.paper;
       const label = `${isKeeper ? '🧤 ' : ''}${p.name.toUpperCase()}`;
       ctx.fillText(fit(ctx, label, colW - 120), t ? x + colW - 28 : x + 28, y + 50);
-      const tag = isKeeper ? 'GK' : p.def === 3 ? 'CB' : '';
+      const tag = isKeeper ? 'GK' : sub ? '' : (p.def === 3 || p.pos === 'CB' || p.alt === 'CB') ? 'CB' : '';
       if (tag) {
         ctx.font = '700 20px "Space Mono", monospace';
         const tw = ctx.measureText(tag).width + 16;
