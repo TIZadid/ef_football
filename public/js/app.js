@@ -606,9 +606,28 @@ function ticket(p, i, selectable = true, recent = false) {
 }
 
 // ---------- step 1: pick ----------
+// Tonight's guests plus guests from earlier games (the recent list).
+function allGuests() {
+  const s = state.session;
+  const past = state.recent.filter((g) => !s.guests.some((x) => x.id === g.id)).map(({ t, ...g }) => ({ ...g, guest: true }));
+  return [...s.guests, ...past];
+}
+
+// Make a guest from an earlier game part of tonight's list.
+function ensureGuest(id) {
+  const s = state.session;
+  if (s.guests.some((g) => g.id === id)) return;
+  const g = state.recent.find((x) => x.id === id);
+  if (!g) return;
+  const { t, ...guest } = g;
+  s.guests.push({ ...guest, guest: true });
+}
+
 function pick() {
   const s = state.session;
-  const list = [...state.pool.slice().sort(byName), ...s.guests];
+  const guests = allGuests();
+  // Regulars always show; guests only when picked or when "Show guests" is on.
+  const list = [...state.pool.slice().sort(byName), ...guests.filter((g) => isPlaying(g.id) || s.showRecent)];
   const canRepeat = s.lastPicked.length && s.lastPicked.some((id) => byId(id)) && s.lastPicked.join() !== s.picked.join();
   const el = h(`
     <section class="screen">
@@ -630,6 +649,7 @@ function pick() {
           ${canRepeat ? '<button class="chip" data-repeat>↺ Same as last game</button>' : ''}
           <button class="chip" data-all>All in</button>
           <button class="chip" data-none>Clear</button>
+          ${guests.length ? `<button class="chip guests-toggle ${s.showRecent ? 'on' : ''}" data-toggle-guests>${s.showRecent ? 'Hide guests' : `Show guests (${guests.length})`}</button>` : ''}
         </div>
       </div>
       <div class="grid" style="--d:3">
@@ -637,7 +657,6 @@ function pick() {
         <button class="add-tile" data-guest><b>+</b>Guest</button>
       </div>
       ${state.pool.length ? '' : `<div class="empty" style="--d:4;margin-top:14px"><p class="muted">No squad yet. Add guests, or set up your regulars.</p><button class="btn small paper" data-go="squad">Set up squad</button></div>`}
-      ${recentGuestsBlock()}
       <div class="dock"><div class="dock-inner">
         <div class="tally"><span class="count" data-count>${pad(s.picked.length)}</span><span class="mono muted" data-split-info></span></div>
         <button class="btn ghost small" data-go="rules" data-rules-btn><span>Rules</span></button>
@@ -680,33 +699,14 @@ function pick() {
       return sync(false);
     }
     const editGuest = e.target.closest('[data-edit-guest]');
-    if (editGuest) return openPlayerSheet({ player: byId(editGuest.closest('.ticket').dataset.id) });
-    if (e.target.closest('[data-toggle-recent]')) {
+    if (editGuest) {
+      const id = editGuest.closest('.ticket').dataset.id;
+      ensureGuest(id);
+      return openPlayerSheet({ player: byId(id) });
+    }
+    if (e.target.closest('[data-toggle-guests]')) {
       s.showRecent = !s.showRecent;
       save();
-      const n = el.querySelectorAll('.ticket.recent').length;
-      el.querySelector('[data-recent-body]').hidden = !s.showRecent;
-      const btn = e.target.closest('[data-toggle-recent]');
-      btn.classList.toggle('on', s.showRecent);
-      btn.textContent = s.showRecent ? 'Hide' : `Show ${n}`;
-      return;
-    }
-    if (e.target.closest('[data-clear-recent]')) {
-      state.recent = [];
-      state.recentCleared = Date.now();
-      save();
-      el.querySelector('.recent-block')?.remove();
-      return toast('Recent guests cleared');
-    }
-    const back = e.target.closest('.ticket.recent');
-    if (back) {
-      const g = state.recent.find((x) => x.id === back.dataset.id);
-      const { t, ...guest } = g;
-      s.guests.push({ ...guest, guest: true });
-      s.picked.push(g.id);
-      rememberGuest(g);
-      save();
-      toast(`${g.name} is back`);
       const y = window.scrollY;
       show('pick', false);
       window.scrollTo(0, y);
@@ -715,14 +715,17 @@ function pick() {
     const t = e.target.closest('.ticket');
     if (t) {
       const id = t.dataset.id;
+      ensureGuest(id);
       buzz(8);
       return setPicked(isPlaying(id) ? s.picked.filter((x) => x !== id) : [...s.picked, id]);
     }
     if (e.target.closest('[data-repeat]')) {
       e.target.closest('[data-repeat]').remove();
+      s.lastPicked.forEach(ensureGuest);
       return setPicked(s.lastPicked.filter((id) => byId(id)));
     }
-    if (e.target.closest('[data-all]')) return setPicked(everyone().map((p) => p.id));
+    // All in = every regular; guests already picked stay picked.
+    if (e.target.closest('[data-all]')) return setPicked([...state.pool.map((p) => p.id), ...s.picked.filter((id) => !state.pool.some((p) => p.id === id))]);
     if (e.target.closest('[data-none]')) return setPicked([]);
     if (e.target.closest('[data-guest]')) return openPlayerSheet({ guest: true });
     if (e.target.closest('[data-split]')) startSplit();
@@ -733,23 +736,6 @@ function pick() {
   });
   sync(false);
   return el;
-}
-
-function recentGuestsBlock() {
-  const s = state.session;
-  const list = state.recent.filter((g) => !s.guests.some((x) => x.id === g.id));
-  if (!list.length) return '';
-  return `
-    <section class="recent-block" style="--d:5">
-      <div class="recent-head">
-        <div><h2 class="display">Recent guests</h2><span class="mono muted">Not in the squad · tap to bring back</span></div>
-        <button class="chip ${s.showRecent ? 'on' : ''}" data-toggle-recent>${s.showRecent ? 'Hide' : `Show ${list.length}`}</button>
-      </div>
-      <div data-recent-body ${s.showRecent ? '' : 'hidden'}>
-        <div class="grid">${list.map((p, i) => ticket(p, i, false, true)).join('')}</div>
-        <button class="chip clear-recent" data-clear-recent>Clear list</button>
-      </div>
-    </section>`;
 }
 
 function startSplit() {
@@ -1333,6 +1319,7 @@ function openPlayerSheet({ player = null, guest = false }) {
     if (e.target.closest('[data-del]')) {
       state.pool = state.pool.filter((p) => p.id !== player.id);
       state.session.guests = state.session.guests.filter((p) => p.id !== player.id);
+      if (player.guest) state.recent = state.recent.filter((p) => p.id !== player.id);
       prune();
       closeSheet();
       toast(`${player.name} removed`);
