@@ -28,11 +28,16 @@ const TEAM_NAMES = ['Lime', 'Orange'];
 
 // Players saved before positions existed used wing / central / both.
 const LEGACY_POS = { wing: ['WING', null], central: ['MID', null], both: ['MID', 'WING'] };
+// A player added without stats counts as average with no position, so they
+// never fill a team's CB or MID slot.
+const unratedStats = (p) => ({ ...p, att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: null, alt: null, unrated: true });
+
 function normalise(p) {
   const clamp = (v, d = 2) => Math.min(3, Math.max(1, Math.round(Number(v) || d)));
   const [legacyPos, legacyAlt] = LEGACY_POS[p.pos] ?? [];
   const pos = POSITIONS.includes(p.pos) ? p.pos : legacyPos ?? 'MID';
   const alt = POSITIONS.includes(p.alt) && p.alt !== pos ? p.alt : legacyPos ? legacyAlt : null;
+  if (p.unrated) return { ...unratedStats(p), id: String(p.id || uid()), name: String(p.name).slice(0, 18), ...(p.guest ? { guest: true } : {}) };
   return {
     id: String(p.id || uid()), name: String(p.name).slice(0, 18),
     att: clamp(p.att), def: clamp(p.def), phy: clamp(p.phy), fb: clamp(p.fb), gk: clamp(p.gk, 1),
@@ -58,7 +63,7 @@ const pad = (n) => String(n).padStart(2, '0');
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const dateLabel = () => new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).toUpperCase();
-const posTag = (p) => `${p.pos}${p.alt ? ` · ${p.alt}` : ''}`;
+const posTag = (p) => (p.unrated ? 'ANY' : `${p.pos}${p.alt ? ` · ${p.alt}` : ''}`);
 const buzz = (pattern) => navigator.vibrate && navigator.vibrate(pattern);
 
 const everyone = () => [...state.pool, ...state.session.guests];
@@ -268,7 +273,7 @@ function ticket(p, i, selectable = true) {
     <button class="ticket ${on ? 'on' : ''}" data-id="${p.id}" style="--i:${i}" ${selectable ? `aria-pressed="${on}"` : ''}>
       ${selectable ? '<span class="stamp">IN</span>' : ''}
       <span class="name">${esc(p.name)}</span>
-      ${bars(p)}
+      ${p.unrated ? '<span class="no-stats">No stats · plays as average</span>' : bars(p)}
       <span class="row">
         <span class="pos">${posTag(p)}</span>
         ${p.guest ? '<span class="pos guest-tag" data-remove title="Remove guest">GUEST ✕</span>' : '<span class="barcode" style="flex:1;max-width:56px"></span>'}
@@ -585,7 +590,7 @@ function slotHtml(p, keeper) {
       <span class="nm">${isGk ? '🧤 ' : ''}${esc(p.name)}</span>
       <span class="badges">
         ${!isGk && isCB(p) ? '<span class="b cb">CB</span>' : ''}
-        <span class="b">${isGk ? `GK${p.gk}` : p.pos}</span>
+        <span class="b">${isGk ? `GK${p.gk}` : p.pos ?? '?'}</span>
       </span>
     </button></li>`;
 }
@@ -752,7 +757,9 @@ function closeSheet() {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
 function openPlayerSheet({ player = null, guest = false }) {
-  const draft = player ? { ...player } : { id: uid(), name: '', att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: 'MID', alt: null };
+  const draft = player ? { ...player, pos: player.pos ?? 'MID' } : { id: uid(), name: '', att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: 'MID', alt: null };
+  // New guests start as name-only; ratings are optional.
+  let rated = !(guest && !player);
   const posButtons = () => POSITIONS.map((v) => `<button type="button" data-v="${v}" class="${draft.pos === v ? 'on' : ''}">${v}</button>`).join('');
   const altButtons = () => ['', ...POSITIONS].map((v) => `
     <button type="button" data-v="${v}" class="${(draft.alt ?? '') === v ? 'on' : ''}" ${v && v === draft.pos ? 'disabled' : ''}>${v || '—'}</button>`).join('');
@@ -760,6 +767,9 @@ function openPlayerSheet({ player = null, guest = false }) {
     <span class="mono">${player ? 'Edit player' : guest ? 'Tonight only' : 'New regular'}</span>
     <h2 class="display">${player ? esc(player.name) : guest ? 'Guest' : 'New player'}</h2>
     <label class="field"><input type="text" maxlength="18" placeholder="Name" autocomplete="off" value="${esc(draft.name)}"></label>
+    ${rated ? '' : '<button type="button" class="reveal-stats" data-rate>+ Add stats & position <small>optional</small></button>'}
+    ${player?.unrated ? '<p class="sheet-note">No stats yet. Rate them below, or leave as is to keep them average.</p>' : ''}
+    <div class="details" ${rated ? '' : 'hidden'}>
     <div class="pos-block">
       <div class="lbl-row"><b>Main position</b><small data-pos-name>${POS_LABEL[draft.pos]}</small></div>
       <div class="seg pos-seg" data-pos>${posButtons()}</div>
@@ -771,6 +781,7 @@ function openPlayerSheet({ player = null, guest = false }) {
         <div class="lbl"><b>${label}</b><small>${help}</small></div>
         <div class="pips">${[1, 2, 3].map((n) => `<button type="button" data-n="${n}" class="${draft[k] >= n ? 'f' : ''}" aria-label="${label} ${n}">${n}</button>`).join('')}</div>
       </div>`).join('')}
+    </div>
     ${guest ? '<label class="check"><input type="checkbox" data-keep> Add to the squad too</label>' : ''}
     <div class="actions">
       ${player ? '<button class="btn ghost small" data-del><span>Delete</span></button>' : ''}
@@ -779,10 +790,20 @@ function openPlayerSheet({ player = null, guest = false }) {
 
   const input = sheet.querySelector('input[type="text"]');
   if (!player) setTimeout(() => input.focus(), 350);
+  let touched = false;
 
   sheet.addEventListener('click', (e) => {
+    if (e.target.closest('[data-rate]')) {
+      rated = true;
+      e.target.closest('[data-rate]').remove();
+      const details = sheet.querySelector('.details');
+      details.hidden = false;
+      details.animate([{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }], { duration: 300, easing: 'cubic-bezier(.16,1,.3,1)' });
+      return;
+    }
     const pipBtn = e.target.closest('.pips button');
     if (pipBtn) {
+      touched = true;
       const k = pipBtn.closest('.rate').dataset.k;
       draft[k] = Number(pipBtn.dataset.n);
       pipBtn.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('f', Number(b.dataset.n) <= draft[k]));
@@ -790,6 +811,7 @@ function openPlayerSheet({ player = null, guest = false }) {
     }
     const posBtn = e.target.closest('[data-pos] button');
     if (posBtn) {
+      touched = true;
       draft.pos = posBtn.dataset.v;
       if (draft.alt === draft.pos) draft.alt = null;
       sheet.querySelector('[data-pos]').innerHTML = posButtons();
@@ -799,6 +821,7 @@ function openPlayerSheet({ player = null, guest = false }) {
     }
     const altBtn = e.target.closest('[data-alt] button');
     if (altBtn) {
+      touched = true;
       draft.alt = altBtn.dataset.v || null;
       sheet.querySelector('[data-alt]').innerHTML = altButtons();
       return;
@@ -817,6 +840,10 @@ function openPlayerSheet({ player = null, guest = false }) {
         input.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-8px)' }, { transform: 'translateX(8px)' }, { transform: 'translateX(0)' }], { duration: 260 });
         return input.focus();
       }
+      // Stay unrated unless stats were opened (new guest) or changed (unrated player).
+      const keepUnrated = player ? player.unrated && !touched : !rated;
+      if (keepUnrated) Object.assign(draft, unratedStats(draft));
+      else delete draft.unrated;
       const s = state.session;
       if (player) {
         const list = player.guest ? s.guests : state.pool;

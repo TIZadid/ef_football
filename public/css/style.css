@@ -476,6 +476,21 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .sheet .pos-seg.alt button.on { background: var(--orange); color: var(--ink); }
 .sheet .pos-seg button[disabled] { opacity: 0.25; }
 
+/* ---------- unrated players ---------- */
+.no-stats {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 6px 0; border-block: 1px dashed currentColor; opacity: 0.7;
+}
+.reveal-stats {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px; margin-bottom: 14px; border: 2px dashed var(--ink); color: var(--ink);
+  font-family: var(--display); font-size: 20px; text-transform: uppercase;
+  transition: background 0.2s, transform 0.25s var(--ease-spring);
+}
+.reveal-stats small { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; opacity: 0.6; }
+.reveal-stats:active { transform: scale(0.97); background: var(--lime); }
+.sheet-note { font-size: 14px; margin: -4px 0 12px; opacity: 0.75; }
+
 /* ---------- toast ---------- */
 #toast {
   position: fixed; left: 50%; top: 18px; z-index: 80; pointer-events: none;

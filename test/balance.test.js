@@ -140,3 +140,13 @@ test('evaluate flags broken rules after edits', () => {
   const e = evaluate(squad.slice(0, 7), squad.slice(7), { together: [['a', 'h']] });
   assert.ok(e.warnings.some((w) => w.includes('together')));
 });
+
+test('unrated guests (no position, average stats) never fill the CB or MID slot', () => {
+  const guest = { id: 'g', name: 'g', att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: null, alt: null, unrated: true };
+  assert.ok(!isCB(guest) && !isMid(guest));
+  const r = balance([...squad.slice(0, 9), guest], { rng });
+  for (const u of r.lineups) {
+    assert.ok(u.starters.some((p) => p !== u.keeper && isCB(p)));
+    assert.ok(u.starters.some((p) => p !== u.keeper && isMid(p)));
+  }
+});
