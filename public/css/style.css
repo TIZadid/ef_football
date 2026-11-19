@@ -373,7 +373,20 @@ button[disabled] { cursor: default; }
 .odds-bar { height: 16px; border-radius: 999px; overflow: hidden; background: var(--paper); border: 2px solid var(--paper); }
 .odds-bar i { display: block; height: 100%; width: var(--a); background: var(--accent); border-right: 0; animation: grow 0.9s var(--ease-out); }
 @keyframes grow { from { width: 50%; } }
-.view-toggle { max-width: 260px; margin: 0 auto 14px; }
+.view-row { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.view-toggle { width: 220px; margin: 0; }
+.pitch-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 72px; gap: 6px; margin-bottom: 10px; }
+.pitch-wrap .pitch { margin-bottom: 0; }
+.sideline {
+  position: relative; display: grid; grid-template-rows: 1fr 1fr; padding: 26px 0 8px;
+  border-radius: 14px; border: 2px dashed var(--line); background: rgba(255, 248, 202, 0.03);
+}
+.sideline-label { position: absolute; top: 6px; left: 0; right: 0; text-align: center; font-size: 9px; color: var(--muted); }
+.bench { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 6px 0; }
+.bench.top { justify-content: flex-start; border-bottom: 2px dashed var(--line); }
+.bench.bottom { justify-content: flex-end; }
+.bench .pchip { width: 66px; }
+.bench .pchip .role { color: var(--guest); }
 
 .balance-row { display: flex; align-items: flex-end; gap: 12px; margin: 10px 0; }
 .balance-row .pct { font-family: var(--display); font-weight: 400; font-size: clamp(64px, 20vw, 110px); line-height: 0.85; color: var(--accent); text-shadow: 4px 4px 0 var(--accent-2); }

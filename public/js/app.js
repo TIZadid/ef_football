@@ -982,9 +982,12 @@ function result() {
         </div>
         <div class="odds-bar"><i style="--a:${r.balance}%"></i></div>
       </div>
-      <div class="seg view-toggle">
-        <button data-view="pitch" class="${s.view === 'pitch' ? 'on' : ''}">Pitch</button>
-        <button data-view="list" class="${s.view === 'list' ? 'on' : ''}">List</button>
+      <div class="view-row">
+        <div class="seg view-toggle">
+          <button data-view="pitch" class="${s.view === 'pitch' ? 'on' : ''}">Pitch</button>
+          <button data-view="list" class="${s.view === 'list' ? 'on' : ''}">List</button>
+        </div>
+        <button class="chip" data-swap-colours title="Swap which team is Black and which is White">⇄ Swap colours</button>
       </div>
       ${s.view === 'pitch' ? pitchView(r) : `<div class="versus"><span class="vs">VS</span>${r.lineups.map((u, t) => teamPanel(u, t)).join('')}</div>`}
       ${r.warnings.map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join('')}
@@ -1005,6 +1008,15 @@ function result() {
   };
 
   el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-swap-colours]')) {
+      const res = s.result;
+      res.teams.reverse(); res.starters.reverse(); res.goal.reverse();
+      save();
+      paint();
+      revealTeams();
+      buzz(10);
+      return toast('Colours swapped');
+    }
     const v = e.target.closest('[data-view]');
     if (v) { s.view = v.dataset.view; save(); paint(); revealTeams(); return; }
     const pl = e.target.closest('.pl');
@@ -1040,20 +1052,23 @@ function pitchView(r) {
     return `<div class="half ${t ? 'top' : 'bottom'}">${ordered.map((line) => `
       <div class="line">${line.map((p) => chipHtml(p, u.keeper, roles.get(p)?.role, t)).join('')}</div>`).join('')}</div>`;
   };
-  const bench = (t) => (r.lineups[t].subs.length ? `
-    <div class="bench-row ${t ? 'b' : 'a'}"><span class="mono">${TEAM_NAMES[t]} subs</span>
-      ${r.lineups[t].subs.map((p) => `<button class="pl bench-chip" data-id="${p.id}">${esc(p.name)}</button>`).join('')}
-    </div>` : '');
-  return `
-    ${bench(1)}
+  // Subs sit on the bench beside their own half, shown like everyone else.
+  const bench = (t) => `<div class="bench ${t ? 'top' : 'bottom'}">
+    ${r.lineups[t].subs.map((p) => chipHtml(p, null, 'SUB', t)).join('')}</div>`;
+  const hasSubs = r.lineups.some((u) => u.subs.length);
+  const pitch = `
     <div class="pitch">
       <span class="team-tag top">White</span>
       ${half(1)}
       <div class="halfway"></div>
       ${half(0)}
       <span class="team-tag bottom">Black</span>
-    </div>
-    ${bench(0)}`;
+    </div>`;
+  return hasSubs ? `
+    <div class="pitch-wrap">
+      ${pitch}
+      <div class="sideline"><span class="sideline-label mono">Bench</span>${bench(1)}${bench(0)}</div>
+    </div>` : pitch;
 }
 
 function chipHtml(p, keeper, role, t) {
