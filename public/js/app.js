@@ -28,16 +28,21 @@ const TEAM_NAMES = ['Lime', 'Orange'];
 
 // Players saved before positions existed used wing / central / both.
 const LEGACY_POS = { wing: ['WING', null], central: ['MID', null], both: ['MID', 'WING'] };
-// A player added without stats counts as average with no position, so they
-// never fill a team's CB or MID slot.
-const unratedStats = (p) => ({ ...p, att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: null, alt: null, unrated: true });
+// Any stat can be left empty (null), e.g. for a guest nobody knows yet. Empty
+// stats count as average, and an empty position never fills a CB or MID slot.
+const DEFAULTS = { att: 2, def: 2, phy: 2, fb: 2, gk: 1 };
+const STAT_KEYS = Object.keys(DEFAULTS);
+const isEmpty = (p, k) => p[k] === null;
+const hasEmpty = (p) => STAT_KEYS.some((k) => isEmpty(p, k)) || p.pos === null;
+// A copy with empty stats filled in, for the balancing algorithm.
+const resolved = (p) => ({ ...p, ...Object.fromEntries(STAT_KEYS.map((k) => [k, p[k] ?? DEFAULTS[k]])), empty: STAT_KEYS.filter((k) => isEmpty(p, k)) });
 
 function normalise(p) {
-  const clamp = (v, d = 2) => Math.min(3, Math.max(1, Math.round(Number(v) || d)));
+  // null = deliberately empty; missing = an old record, use the default.
+  const clamp = (v, d = 2) => (v === null || p.unrated ? null : Math.min(3, Math.max(1, Math.round(Number(v) || d))));
   const [legacyPos, legacyAlt] = LEGACY_POS[p.pos] ?? [];
-  const pos = POSITIONS.includes(p.pos) ? p.pos : legacyPos ?? 'MID';
+  const pos = POSITIONS.includes(p.pos) ? p.pos : p.pos === null || p.unrated ? null : legacyPos ?? 'MID';
   const alt = POSITIONS.includes(p.alt) && p.alt !== pos ? p.alt : legacyPos ? legacyAlt : null;
-  if (p.unrated) return { ...unratedStats(p), id: String(p.id || uid()), name: String(p.name).slice(0, 18), ...(p.guest ? { guest: true } : {}) };
   return {
     id: String(p.id || uid()), name: String(p.name).slice(0, 18),
     att: clamp(p.att), def: clamp(p.def), phy: clamp(p.phy), fb: clamp(p.fb), gk: clamp(p.gk, 1),
@@ -63,12 +68,12 @@ const pad = (n) => String(n).padStart(2, '0');
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const dateLabel = () => new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).toUpperCase();
-const posTag = (p) => (p.unrated ? 'ANY' : `${p.pos}${p.alt ? ` · ${p.alt}` : ''}`);
+const posTag = (p) => `${p.pos ?? '?'}${p.alt ? ` · ${p.alt}` : ''}`;
 const buzz = (pattern) => navigator.vibrate && navigator.vibrate(pattern);
 
 const everyone = () => [...state.pool, ...state.session.guests];
 const byId = (id) => everyone().find((p) => p.id === id);
-const playing = () => state.session.picked.map(byId).filter(Boolean);
+const playing = () => state.session.picked.map(byId).filter(Boolean).map(resolved);
 const isPlaying = (id) => state.session.picked.includes(id);
 
 function save() {
@@ -115,7 +120,7 @@ function bump(el) {
 }
 
 const bars = (p) => `<div class="bars">${RATINGS.map(([k, short]) => `
-  <div><span>${short}</span><p>${[1, 2, 3].map((n) => `<i class="${p[k] >= n ? 'f' : ''}"></i>`).join('')}</p></div>`).join('')}</div>`;
+  <div class="${isEmpty(p, k) ? 'unk' : ''}"><span>${short}</span><p>${isEmpty(p, k) ? '<i></i><b>?</b><i></i>' : [1, 2, 3].map((n) => `<i class="${p[k] >= n ? 'f' : ''}"></i>`).join('')}</p></div>`).join('')}</div>`;
 
 const topbar = (back, step) => `
   <div class="topbar" style="--d:0">
@@ -273,10 +278,10 @@ function ticket(p, i, selectable = true) {
     <button class="ticket ${on ? 'on' : ''}" data-id="${p.id}" style="--i:${i}" ${selectable ? `aria-pressed="${on}"` : ''}>
       ${selectable ? '<span class="stamp">IN</span>' : ''}
       <span class="name">${esc(p.name)}</span>
-      ${p.unrated ? '<span class="no-stats">No stats · plays as average</span>' : bars(p)}
+      ${bars(p)}
       <span class="row">
         <span class="pos">${posTag(p)}</span>
-        ${p.guest ? '<span class="pos guest-tag" data-remove title="Remove guest">GUEST ✕</span>' : '<span class="barcode" style="flex:1;max-width:56px"></span>'}
+        ${p.guest ? '<span class="pos guest-tag" data-edit-guest title="Edit guest">GUEST ✎</span>' : '<span class="barcode" style="flex:1;max-width:56px"></span>'}
       </span>
     </button>`;
 }
@@ -335,15 +340,8 @@ function pick() {
       buzz(8);
       return sync(false);
     }
-    const remove = e.target.closest('[data-remove]');
-    if (remove) {
-      const card = remove.closest('.ticket');
-      const id = card.dataset.id;
-      s.guests = s.guests.filter((g) => g.id !== id);
-      prune();
-      card.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.7) rotate(8deg)' }], { duration: 250 }).onfinish = () => card.remove();
-      return sync();
-    }
+    const editGuest = e.target.closest('[data-edit-guest]');
+    if (editGuest) return openPlayerSheet({ player: byId(editGuest.closest('.ticket').dataset.id) });
     const t = e.target.closest('.ticket');
     if (t) {
       const id = t.dataset.id;
@@ -500,7 +498,7 @@ function runSplit(exclude = null) {
 
 function currentResult() {
   const r = state.session.result;
-  const teams = r.teams.map((ids) => ids.map(byId));
+  const teams = r.teams.map((ids) => ids.map((id) => resolved(byId(id))));
   const ev = evaluate(teams[0], teams[1], { ...balanceOpts(), starters: r.starters, goal: r.goal });
   const format = state.session.format;
   ev.lineups.forEach((u, t) => {
@@ -590,7 +588,7 @@ function slotHtml(p, keeper) {
       <span class="nm">${isGk ? '🧤 ' : ''}${esc(p.name)}</span>
       <span class="badges">
         ${!isGk && isCB(p) ? '<span class="b cb">CB</span>' : ''}
-        <span class="b">${isGk ? `GK${p.gk}` : p.pos ?? '?'}</span>
+        <span class="b">${isGk ? `GK${p.empty?.includes('gk') ? '?' : p.gk}` : p.pos ?? '?'}</span>
       </span>
     </button></li>`;
 }
@@ -757,21 +755,33 @@ function closeSheet() {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
 function openPlayerSheet({ player = null, guest = false }) {
-  const draft = player ? { ...player, pos: player.pos ?? 'MID' } : { id: uid(), name: '', att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: 'MID', alt: null };
-  // New guests start as name-only; ratings are optional.
-  let rated = !(guest && !player);
-  const posButtons = () => POSITIONS.map((v) => `<button type="button" data-v="${v}" class="${draft.pos === v ? 'on' : ''}">${v}</button>`).join('');
+  const isGuest = guest || !!player?.guest;
+  // Guests (and anyone already missing a stat) may leave stats empty.
+  const allowEmpty = isGuest || (player && hasEmpty(player));
+  const draft = player
+    ? { ...player }
+    : isGuest
+      ? { id: uid(), name: '', att: null, def: null, phy: null, fb: null, gk: null, pos: null, alt: null }
+      : { id: uid(), name: '', att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: 'MID', alt: null };
+  const showDetails = !(isGuest && !player);
+  const posButtons = () => [...(allowEmpty ? [''] : []), ...POSITIONS].map((v) => `
+    <button type="button" data-v="${v}" class="${(draft.pos ?? '') === v ? 'on' : ''}">${v || '?'}</button>`).join('');
   const altButtons = () => ['', ...POSITIONS].map((v) => `
     <button type="button" data-v="${v}" class="${(draft.alt ?? '') === v ? 'on' : ''}" ${v && v === draft.pos ? 'disabled' : ''}>${v || '—'}</button>`).join('');
+  const pips = (k, label) => [...(allowEmpty ? [''] : []), 1, 2, 3].map((n) => {
+    const on = n === '' ? draft[k] === null : draft[k] !== null && draft[k] >= n;
+    return `<button type="button" data-n="${n}" class="${n === '' ? 'unk' : ''} ${on ? 'f' : ''}" aria-label="${label} ${n || 'unknown'}">${n || '?'}</button>`;
+  }).join('');
+  const posName = () => (draft.pos ? POS_LABEL[draft.pos] : 'Not sure');
   const sheet = openSheet(`
-    <span class="mono">${player ? 'Edit player' : guest ? 'Tonight only' : 'New regular'}</span>
-    <h2 class="display">${player ? esc(player.name) : guest ? 'Guest' : 'New player'}</h2>
+    <span class="mono">${player ? (isGuest ? 'Edit guest' : 'Edit player') : isGuest ? 'Tonight only' : 'New regular'}</span>
+    <h2 class="display">${player ? esc(player.name) : isGuest ? 'Guest' : 'New player'}</h2>
     <label class="field"><input type="text" maxlength="18" placeholder="Name" autocomplete="off" value="${esc(draft.name)}"></label>
-    ${rated ? '' : '<button type="button" class="reveal-stats" data-rate>+ Add stats & position <small>optional</small></button>'}
-    ${player?.unrated ? '<p class="sheet-note">No stats yet. Rate them below, or leave as is to keep them average.</p>' : ''}
-    <div class="details" ${rated ? '' : 'hidden'}>
+    ${showDetails ? '' : '<button type="button" class="reveal-stats" data-rate>+ Add stats & position <small>optional</small></button>'}
+    <div class="details" ${showDetails ? '' : 'hidden'}>
+    ${allowEmpty ? '<p class="sheet-note">Leave anything you don\'t know on <b>?</b> and it counts as average.</p>' : ''}
     <div class="pos-block">
-      <div class="lbl-row"><b>Main position</b><small data-pos-name>${POS_LABEL[draft.pos]}</small></div>
+      <div class="lbl-row"><b>Main position</b><small data-pos-name>${posName()}</small></div>
       <div class="seg pos-seg" data-pos>${posButtons()}</div>
       <div class="lbl-row"><b>Backup</b><small>Optional</small></div>
       <div class="seg pos-seg alt" data-alt>${altButtons()}</div>
@@ -779,22 +789,20 @@ function openPlayerSheet({ player = null, guest = false }) {
     ${RATINGS.map(([k, , label, help]) => `
       <div class="rate" data-k="${k}">
         <div class="lbl"><b>${label}</b><small>${help}</small></div>
-        <div class="pips">${[1, 2, 3].map((n) => `<button type="button" data-n="${n}" class="${draft[k] >= n ? 'f' : ''}" aria-label="${label} ${n}">${n}</button>`).join('')}</div>
+        <div class="pips">${pips(k, label)}</div>
       </div>`).join('')}
     </div>
-    ${guest ? '<label class="check"><input type="checkbox" data-keep> Add to the squad too</label>' : ''}
+    ${isGuest && !player ? '<label class="check"><input type="checkbox" data-keep> Add to the squad too</label>' : ''}
     <div class="actions">
-      ${player ? '<button class="btn ghost small" data-del><span>Delete</span></button>' : ''}
-      <button class="btn" data-save>${guest ? 'Add guest' : 'Save'}</button>
+      ${player ? `<button class="btn ghost small" data-del><span>${isGuest ? 'Remove' : 'Delete'}</span></button>` : ''}
+      <button class="btn" data-save>${isGuest && !player ? 'Add guest' : 'Save'}</button>
     </div>`);
 
   const input = sheet.querySelector('input[type="text"]');
   if (!player) setTimeout(() => input.focus(), 350);
-  let touched = false;
 
   sheet.addEventListener('click', (e) => {
     if (e.target.closest('[data-rate]')) {
-      rated = true;
       e.target.closest('[data-rate]').remove();
       const details = sheet.querySelector('.details');
       details.hidden = false;
@@ -803,25 +811,23 @@ function openPlayerSheet({ player = null, guest = false }) {
     }
     const pipBtn = e.target.closest('.pips button');
     if (pipBtn) {
-      touched = true;
-      const k = pipBtn.closest('.rate').dataset.k;
-      draft[k] = Number(pipBtn.dataset.n);
-      pipBtn.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('f', Number(b.dataset.n) <= draft[k]));
+      const rate = pipBtn.closest('.rate');
+      const k = rate.dataset.k;
+      draft[k] = pipBtn.dataset.n ? Number(pipBtn.dataset.n) : null;
+      rate.querySelector('.pips').innerHTML = pips(k, rate.querySelector('b').textContent);
       return;
     }
     const posBtn = e.target.closest('[data-pos] button');
     if (posBtn) {
-      touched = true;
-      draft.pos = posBtn.dataset.v;
+      draft.pos = posBtn.dataset.v || null;
       if (draft.alt === draft.pos) draft.alt = null;
       sheet.querySelector('[data-pos]').innerHTML = posButtons();
       sheet.querySelector('[data-alt]').innerHTML = altButtons();
-      sheet.querySelector('[data-pos-name]').textContent = POS_LABEL[draft.pos];
+      sheet.querySelector('[data-pos-name]').textContent = posName();
       return;
     }
     const altBtn = e.target.closest('[data-alt] button');
     if (altBtn) {
-      touched = true;
       draft.alt = altBtn.dataset.v || null;
       sheet.querySelector('[data-alt]').innerHTML = altButtons();
       return;
@@ -840,20 +846,17 @@ function openPlayerSheet({ player = null, guest = false }) {
         input.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-8px)' }, { transform: 'translateX(8px)' }, { transform: 'translateX(0)' }], { duration: 260 });
         return input.focus();
       }
-      // Stay unrated unless stats were opened (new guest) or changed (unrated player).
-      const keepUnrated = player ? player.unrated && !touched : !rated;
-      if (keepUnrated) Object.assign(draft, unratedStats(draft));
-      else delete draft.unrated;
+      delete draft.unrated;
       const s = state.session;
       if (player) {
         const list = player.guest ? s.guests : state.pool;
         list[list.findIndex((p) => p.id === player.id)] = draft;
-      } else if (guest && !sheet.querySelector('[data-keep]').checked) {
+      } else if (isGuest && !sheet.querySelector('[data-keep]').checked) {
         s.guests.push({ ...draft, guest: true });
         s.picked.push(draft.id);
       } else {
         state.pool.push(draft);
-        if (guest) s.picked.push(draft.id);
+        if (isGuest) s.picked.push(draft.id);
       }
       save();
       closeSheet();
