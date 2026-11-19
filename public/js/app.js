@@ -3,6 +3,7 @@ import {
 } from './balance.js';
 import { renderShareImage, shareText } from './share.js';
 import { mergeDocs, FIELDS, RECENT_SIZE } from './sync.js';
+import { confettiFrom, countUp, heroShapes } from './fx.js';
 
 const app = document.getElementById('app');
 const sheetRoot = document.getElementById('sheet-root');
@@ -371,7 +372,7 @@ function show(name, animate = true) {
     if (dir) el.classList.add(`enter-${dir}`);
     app.replaceChildren(el);
     window.scrollTo(0, 0);
-    if (name === 'result' && state.reveal) { state.reveal = false; requestAnimationFrame(revealTeams); }
+    if (name === 'result' && state.reveal) { state.reveal = false; requestAnimationFrame(() => { revealTeams(); celebrate(); }); }
   };
   if (!animate || reduced() || !from) return paint();
   if (state.reveal) {
@@ -408,6 +409,7 @@ function home() {
     <section class="screen home">
       ${appbar('home')}
       <div class="hero" style="--d:1">
+        ${heroShapes()}
         <svg class="wiggle" viewBox="0 0 280 160" aria-hidden="true"><path d="M8 140 C 50 140, 40 30, 92 44 S 130 140, 172 104 S 206 12, 272 24" fill="none" stroke="var(--wiggle)" stroke-width="16" stroke-linecap="round"/></svg>
         <div class="badge-logo"><h1 class="headline"><span>Game</span><span>On</span></h1></div>
         <span class="sticker">Fair teams<br>every week</span>
@@ -717,6 +719,7 @@ function pick() {
       const id = t.dataset.id;
       ensureGuest(id);
       buzz(8);
+      if (!isPlaying(id)) confettiFrom(t, 8, 0.45);
       return setPicked(isPlaying(id) ? s.picked.filter((x) => x !== id) : [...s.picked, id]);
     }
     if (e.target.closest('[data-repeat]')) {
@@ -961,14 +964,10 @@ function result() {
   const paint = () => {
     const r = currentResult();
     const [a, b] = r.stats;
-    const keepers = s.keeperMode !== 'none';
-    const hasSubs = r.lineups.some((u) => u.subs.length);
     const units = [
       ['Attack', a.atk, b.atk],
       ['Back line', a.back, b.back],
       ['Engine', a.eng, b.eng],
-      ...(keepers ? [['Keeper', a.gk, b.gk]] : []),
-      ...(hasSubs ? [['Starting 5', a.start, b.start]] : []),
     ];
     body.innerHTML = `
       <div class="odds">
@@ -1014,6 +1013,7 @@ function result() {
       save();
       paint();
       revealTeams();
+      confettiFrom(el.querySelector('[data-swap-colours]'), 10, 0.5);
       buzz(10);
       return toast('Colours swapped');
     }
@@ -1024,6 +1024,7 @@ function result() {
     const regen = e.target.closest('[data-shuffle]');
     if (regen) {
       if (runSplit(s.result.signature)) {
+        requestAnimationFrame(() => celebrate(12));
         regen.querySelector('.spin').animate([{ transform: 'rotate(0)' }, { transform: 'rotate(360deg)' }], { duration: 600, easing: 'cubic-bezier(.16,1,.3,1)' });
         buzz(12);
         paint();
@@ -1073,7 +1074,8 @@ function pitchView(r) {
 
 function chipHtml(p, keeper, role, t) {
   const isGk = p === keeper;
-  return `<button class="pl pchip ${t ? 'b' : 'a'} ${isGk ? 'gk' : ''}" data-id="${p.id}">
+  const tip = isGk ? `Keeper · GK ${p.empty?.includes('gk') ? '?' : p.gk}` : `OVR ${ovr(p)} · ${role === 'SUB' ? 'Sub' : role === 'ANY' ? 'Any position' : POS_LABEL[role] ?? role}`;
+  return `<button class="pl pchip ${t ? 'b' : 'a'} ${isGk ? 'gk' : ''}" data-id="${p.id}" data-tip="${esc(tip)}">
     <span class="dot">${isGk ? '🧤' : esc(p.name.slice(0, 1).toUpperCase())}</span>
     <span class="nm">${esc(p.name)}</span>
     <span class="role">${isGk ? `GK${p.empty?.includes('gk') ? '?' : p.gk}` : role === 'ANY' ? 'ANY' : role}</span>
@@ -1185,6 +1187,14 @@ function openEditSheet(id, body, paint) {
 }
 
 // Players fly in from a shuffled pile in the middle.
+// The balance % counts up and the shapes pop when teams land.
+function celebrate(count = 30) {
+  const pct = app.querySelector('.balance-row .pct');
+  if (!pct) return;
+  countUp(pct, Number(pct.firstChild.nodeValue), 40);
+  setTimeout(() => confettiFrom(pct, count, 1), 350);
+}
+
 function revealTeams() {
   if (reduced()) return;
   const els = [...app.querySelectorAll('.pl')];

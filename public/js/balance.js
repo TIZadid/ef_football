@@ -17,15 +17,15 @@
 //   - Team units: Attack, Back line (outfield defense + keeper), Engine
 //     (physicality + tracking back) and Keeper. The keeper is weighted more
 //     the smaller the game.
-//   - Expected strength is the whole squad's, bench included: subs rotate in
-//     and share minutes, so every player counts equally.
+//   - Everything is measured over the whole squad, bench included: subs
+//     rotate in and share minutes. The starting line-up is display only.
 //   - Win chance comes from the strength gap through a logistic curve.
 //
 // Hard rules (always enforced, or the split is rejected):
 //   - team sizes differ by at most one
 //   - "together" pairs share a team, "apart" pairs don't
 //   - pinned keepers end up on different teams, and start in goal
-// Structural rules for each starting line-up (enforced whenever any split can
+// Structural rules for each team (enforced whenever any split can
 // satisfy them; otherwise the least-bad split wins and a warning is returned):
 //   - a CB: CB as main/backup position, or DEF 3
 //   - a central player: MID as main/backup position
@@ -66,7 +66,6 @@ const W = {
   leak: 0.6, // defense lost per point of missing tracking back × CB weakness
   gkSpread: 4,
   unknown: 3, // per fully-unknown player of difference between the teams
-  rotation: 1, // share of expected strength from the whole squad (subs rotate in)
 };
 
 const TAU = 4; // logistic scale: a strength gap of 1 ≈ 56% win chance
@@ -180,36 +179,41 @@ function outfieldValue(p, role, fit) {
 
 // Units for a line-up (`starters`, with `keeper` in goal) plus the rotation
 // strength of the whole team.
+// A team's units, measured over the whole squad: subs rotate in and share
+// minutes, so the starting line-up shown in the app is display only. Sums are
+// scaled to the outfield places on the pitch, so a team with one extra player
+// isn't counted as stronger just for having more bodies.
 export function teamStats(starters, keeper, { format = 5, team = starters } = {}) {
   const K = keeperWeight(format);
-  const outfield = starters.filter((p) => p !== keeper);
+  const outfield = team.filter((p) => p !== keeper);
   const roles = assignRoles(outfield);
+  const slots = Math.max(0, Math.min(format, team.length) - (keeper ? 1 : 0));
+  const scale = outfield.length ? slots / outfield.length : 0;
   const s = {
     size: team.length,
     keeper,
     roles,
-    att: 0, def: 0, phy: 0, fb: 0, // raw rating sums of outfield starters
     atk: 0, defU: 0, eng: 0,
     gk: keeper ? val(keeper.gk) : 0,
     wing: 0, mid: 0, st: 0,
     cbs: 0, mids: 0, maxDef: 0,
     gkFans: team.filter((p) => p.pos === 'GK').length,
     unknown: team.reduce((sum, p) => sum + unknown(p), 0),
-    // Every outfield player, bench included, for comparing stars.
-    impacts: team.filter((p) => p !== keeper).map(impact).sort((a, b) => b - a),
+    impacts: outfield.map(impact).sort((a, b) => b - a),
   };
   for (const p of outfield) {
     const { role, fit } = roles.get(p);
     const v = outfieldValue(p, role, fit);
     s.atk += v.atk; s.defU += v.def; s.eng += v.eng;
-    s.att += p.att; s.def += p.def; s.phy += p.phy; s.fb += p.fb;
     if (role === 'WING') s.wing++;
     if (role === 'MID') { s.mid++; s.mids++; }
     if (role === 'ST') s.st++;
     if (role === 'CB') s.cbs++;
     if (val(p.def) > s.maxDef) s.maxDef = val(p.def);
   }
-  // Tracking back of the non-CB outfielders, and how good the CB behind them is.
+  s.atk *= scale; s.defU *= scale; s.eng *= scale;
+  s.wing *= scale; s.mid *= scale; s.st *= scale;
+  // Tracking back of the non-CB outfielders, and how good the best CB is.
   const front = outfield.filter((p) => roles.get(p).role !== 'CB');
   const cbsList = outfield.filter((p) => roles.get(p).role === 'CB');
   s.track = front.length ? front.reduce((sum, p) => sum + val(p.fb), 0) / front.length : val(2);
@@ -218,23 +222,7 @@ export function teamStats(starters, keeper, { format = 5, team = starters } = {}
   // the CB, the more it leaks.
   s.defU -= W.leak * Math.max(0, val(2) - s.track) * Math.max(0, val(3) - s.cbQ);
   s.back = s.defU + K * s.gk;
-  s.start = s.atk + s.defU + 0.6 * s.eng + K * s.gk;
-
-  // Rotation: subs share minutes with the outfield starters, so the average
-  // outfielder on the pitch is the average of the whole outfield squad.
-  const squadOutfield = team.filter((p) => p !== keeper);
-  if (squadOutfield.length > outfield.length && outfield.length) {
-    const per = squadOutfield.reduce((sum, p) => {
-      const { role, fit } = roles.get(p) ?? naturalRole(p);
-      const v = outfieldValue(p, role, fit);
-      return sum + v.atk + v.def + 0.6 * v.eng;
-    }, 0) / squadOutfield.length;
-    s.rotation = per * outfield.length + K * s.gk;
-    s.expected = (1 - W.rotation) * s.start + W.rotation * s.rotation;
-  } else {
-    s.rotation = s.start;
-    s.expected = s.start;
-  }
+  s.expected = s.atk + s.defU + 0.6 * s.eng + K * s.gk;
   s.total = s.expected;
   return s;
 }
@@ -297,8 +285,8 @@ export function evaluate(teamA, teamB, opts = {}) {
   });
   const { cost, violations, stats } = score(ups, teams, useKeepers, format);
   const warnings = [];
-  if (violations.cb) warnings.push('A starting line-up has no CB (CB position or DEF 3).');
-  if (violations.mid) warnings.push('A starting line-up has no MID.');
+  if (violations.cb) warnings.push('A team has no CB (CB position or DEF 3).');
+  if (violations.mid) warnings.push('A team has no MID.');
   const side = new Map();
   teamA.forEach((p) => side.set(p.id, 0));
   teamB.forEach((p) => side.set(p.id, 1));
