@@ -17,8 +17,8 @@
 //   - Team units: Attack, Back line (outfield defense + keeper), Engine
 //     (physicality + tracking back) and Keeper. The keeper is weighted more
 //     the smaller the game.
-//   - Expected strength blends the starting line-up with the rotation: subs
-//     share minutes, so a weak bench drags a team down.
+//   - Expected strength is the whole squad's, bench included: subs rotate in
+//     and share minutes, so every player counts equally.
 //   - Win chance comes from the strength gap through a logistic curve.
 //
 // Hard rules (always enforced, or the split is rejected):
@@ -66,7 +66,7 @@ const W = {
   leak: 0.6, // defense lost per point of missing tracking back × CB weakness
   gkSpread: 4,
   unknown: 3, // per fully-unknown player of difference between the teams
-  rotation: 0.3, // share of expected strength that comes from rotating subs
+  rotation: 1, // share of expected strength from the whole squad (subs rotate in)
 };
 
 const TAU = 4; // logistic scale: a strength gap of 1 ≈ 56% win chance
@@ -191,7 +191,8 @@ export function teamStats(starters, keeper, { format = 5, team = starters } = {}
     cbs: 0, mids: 0, maxDef: 0,
     gkFans: team.filter((p) => p.pos === 'GK').length,
     unknown: team.reduce((sum, p) => sum + unknown(p), 0),
-    impacts: outfield.map(impact).sort((a, b) => b - a),
+    // Every outfield player, bench included, for comparing stars.
+    impacts: team.filter((p) => p !== keeper).map(impact).sort((a, b) => b - a),
   };
   for (const p of outfield) {
     const { role, fit } = roles.get(p);

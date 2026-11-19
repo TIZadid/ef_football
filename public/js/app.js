@@ -968,7 +968,7 @@ function result() {
       ['Back line', a.back, b.back],
       ['Engine', a.eng, b.eng],
       ...(keepers ? [['Keeper', a.gk, b.gk]] : []),
-      ...(hasSubs ? [['Squad depth', a.rotation, b.rotation]] : []),
+      ...(hasSubs ? [['Starting 5', a.start, b.start]] : []),
     ];
     body.innerHTML = `
       <div class="odds">

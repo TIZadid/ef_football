@@ -239,3 +239,13 @@ test('the team that tracks back less gets the better CB', () => {
     assert.ok(lazy.cbQ >= busy.cbQ, `lazy cb ${lazy.cbQ} vs ${busy.cbQ}`);
   }
 });
+
+test('balance covers the whole squad, bench included', () => {
+  const r = balance(squad, { rng }); // 14 players: 5 start + 2 subs a side
+  for (const st of r.stats) assert.equal(st.impacts.length, st.size - 1);
+  // A strong bench on one side and a weak one on the other is visible in the score.
+  const A = squad.slice(0, 7), B = squad.slice(7);
+  const weakBench = B.map((p, i) => (i >= 5 ? { ...p, att: 1, def: 1, phy: 1, fb: 1 } : p));
+  const same = evaluate(A, B, {}), worse = evaluate(A, weakBench, {});
+  assert.ok(worse.stats[1].expected < same.stats[1].expected);
+});
