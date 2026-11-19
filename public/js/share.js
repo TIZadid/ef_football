@@ -1,7 +1,7 @@
 // Group-chat exports: a plain-text line-up and a poster-style PNG.
 
 const COLORS = {
-  turf1: '#1b1b1a', turf2: '#1f1f1e', lime: '#F58F1F', orange: '#457534', paper: '#FFF8CA', ink: '#161412',
+  turf1: '#1A0806', lime: '#F58F1F', orange: '#457534', paper: '#FFF8CA', ink: '#161412',
 };
 const DOTS = ['⚫', '⚪'];
 
@@ -62,20 +62,9 @@ export async function renderShareImage({ lineups, names, balance, match, format 
   canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  // Mown stripes, vignette, pitch markings.
-  for (let x = 0; x < W; x += 180) {
-    ctx.fillStyle = COLORS.turf1; ctx.fillRect(x, 0, 90, H);
-    ctx.fillStyle = COLORS.turf2; ctx.fillRect(x + 90, 0, 90, H);
-  }
-  const v = ctx.createRadialGradient(W / 2, H * 0.35, 200, W / 2, H / 2, H * 0.8);
-  v.addColorStop(0, 'rgba(0,0,0,0)');
-  v.addColorStop(1, 'rgba(0,0,0,0.6)');
-  ctx.fillStyle = v;
+  // Plain background, no textures.
+  ctx.fillStyle = COLORS.turf1;
   ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(255,248,202,0.06)';
-  ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.arc(W / 2, H * 0.62, 260, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(0, H * 0.62); ctx.lineTo(W, H * 0.62); ctx.stroke();
 
   // Header.
   ctx.fillStyle = COLORS.paper;
@@ -104,7 +93,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
     // Black bib: charcoal panel with a light outline; white bib: paper.
     const color = t ? COLORS.paper : '#7d837e';
     slant(ctx, x, 380, colW, 120, 26, COLORS.paper, t === 1);
-    if (!t) slant(ctx, x + 3, 383, colW - 6, 114, 24, '#262625', false);
+    if (!t) slant(ctx, x + 3, 383, colW - 6, 114, 24, '#0E0403', false);
     ctx.fillStyle = t ? COLORS.ink : COLORS.paper;
     ctx.font = '700 20px "Space Mono", monospace';
     ctx.textAlign = t ? 'right' : 'left';
@@ -122,7 +111,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
     team.forEach((p, i) => {
       const sub = i >= nStart;
       const y = 528 + i * ROW + (sub ? 60 : 0);
-      ctx.fillStyle = sub ? 'rgba(48,48,48,0.5)' : 'rgba(48,48,48,0.95)';
+      ctx.fillStyle = sub ? 'rgba(42,17,13,0.6)' : '#2A110D';
       ctx.fillRect(x, y, colW, ROW - 12);
       ctx.fillStyle = color;
       ctx.fillRect(t ? x + colW - 8 : x, y, 8, ROW - 12);
