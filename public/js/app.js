@@ -196,8 +196,8 @@ function squad() {
         ${state.pool.length ? '' : `
           <div class="empty">
             <p class="display">Empty pitch</p>
-            <p class="muted">Add your regulars, or load a demo squad to have a play.</p>
-            <button class="btn small paper" data-demo>Load demo squad</button>
+            <p class="muted">Add your regulars to get started.</p>
+            <button class="btn small paper" data-add>Add first player</button>
           </div>`}
         <div class="grid">
           ${state.pool.map((p, i) => ticket(p, i, false)).join('')}
@@ -217,7 +217,6 @@ function squad() {
     const t = e.target.closest('.ticket');
     if (t) return openPlayerSheet({ player: byId(t.dataset.id) });
     if (e.target.closest('[data-add]')) return openPlayerSheet({});
-    if (e.target.closest('[data-demo]')) { state.pool = demoSquad(); save(); toast('Demo squad loaded'); return show('squad', false); }
     if (e.target.closest('[data-export]')) return exportSquad();
   });
   el.querySelector('[data-import]').addEventListener('change', importSquad);
@@ -248,14 +247,18 @@ async function importSquad(e) {
   }
 }
 
-function demoSquad() {
-  const rows = [
-    ['Arif', 3, 1, 2, 1, 1, 'WING', 'ST'], ['Sabbir', 2, 3, 3, 2, 1, 'CB', null], ['Nayeem', 1, 3, 2, 3, 2, 'CB', 'MID'],
-    ['Rakib', 3, 2, 2, 2, 1, 'MID', 'ST'], ['Fahim', 2, 2, 1, 3, 3, 'GK', 'MID'], ['Tanvir', 1, 2, 3, 2, 2, 'WING', null],
-    ['Imran', 2, 3, 2, 1, 1, 'CB', null], ['Shuvo', 3, 1, 1, 1, 1, 'ST', 'WING'], ['Rony', 2, 2, 3, 3, 1, 'MID', 'WING'],
-    ['Mahin', 1, 1, 2, 2, 3, 'GK', null], ['Sakib', 3, 2, 3, 2, 1, 'MID', null], ['Jamil', 2, 1, 1, 2, 2, 'WING', 'MID'],
-  ];
-  return rows.map(([name, att, def, phy, fb, gk, pos, alt]) => ({ id: uid(), name, att, def, phy, fb, gk, pos, alt }));
+// The demo squad was removed. Clear any demo players still saved in the
+// browser, matching name, ratings and positions exactly so real players stay.
+const DEMO_PLAYERS = new Set([
+  'Arif,3,1,2,1,1,WING,ST', 'Sabbir,2,3,3,2,1,CB,', 'Nayeem,1,3,2,3,2,CB,MID', 'Rakib,3,2,2,2,1,MID,ST',
+  'Fahim,2,2,1,3,3,GK,MID', 'Tanvir,1,2,3,2,2,WING,', 'Imran,2,3,2,1,1,CB,', 'Shuvo,3,1,1,1,1,ST,WING',
+  'Rony,2,2,3,3,1,MID,WING', 'Mahin,1,1,2,2,3,GK,', 'Sakib,3,2,3,2,1,MID,', 'Jamil,2,1,1,2,2,WING,MID',
+]);
+function removeDemoPlayers() {
+  const key = (p) => [p.name, p.att, p.def, p.phy, p.fb, p.gk, p.pos, p.alt ?? ''].join(',');
+  const before = state.pool.length;
+  state.pool = state.pool.filter((p) => !DEMO_PLAYERS.has(key(p)));
+  if (state.pool.length !== before) prune();
 }
 
 // ---------- tickets ----------
@@ -881,5 +884,6 @@ async function openShareSheet() {
 }
 
 // ---------- boot ----------
+removeDemoPlayers();
 prune();
 show(routeFromHash(), false);
