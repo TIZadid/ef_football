@@ -1,7 +1,7 @@
 // Group-chat exports: a plain-text line-up and a poster-style PNG.
 
 const COLORS = {
-  turf1: '#040605', turf2: '#070a08', lime: '#c8f53a', orange: '#ff5b1f', paper: '#eceadf', ink: '#0a0d0b',
+  turf1: '#1b1b1a', turf2: '#1f1f1e', lime: '#F58F1F', orange: '#457534', paper: '#FFF8CA', ink: '#161412',
 };
 const DOTS = ['⚫', '⚪'];
 
@@ -46,8 +46,9 @@ export async function renderShareImage({ lineups, names, balance, match, format 
   const keepers = lineups.map((u) => u.keeper);
   await Promise.all([
     document.fonts.load('160px Anton'),
-    document.fonts.load('150px Bungee'),
-    document.fonts.load('48px "Permanent Marker"'),
+    document.fonts.load('150px "Bagel Fat One"'),
+    document.fonts.load('84px "Dela Gothic One"'),
+    document.fonts.load('40px "Bagel Fat One"'),
     document.fonts.load('700 24px "Space Mono"'),
   ]).catch(() => {});
 
@@ -71,7 +72,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
   v.addColorStop(1, 'rgba(0,0,0,0.6)');
   ctx.fillStyle = v;
   ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(236,234,223,0.05)';
+  ctx.strokeStyle = 'rgba(255,248,202,0.06)';
   ctx.lineWidth = 4;
   ctx.beginPath(); ctx.arc(W / 2, H * 0.62, 260, 0, Math.PI * 2); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(0, H * 0.62); ctx.lineTo(W, H * 0.62); ctx.stroke();
@@ -86,7 +87,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
   ctx.fillText(`● ${format}-A-SIDE`, W - 64, 96);
   ctx.textAlign = 'left';
 
-  ctx.font = '150px Bungee, Anton, Impact, sans-serif';
+  ctx.font = '150px "Bagel Fat One", Anton, Impact, sans-serif';
   // Hard offset shadow, sticker style.
   ctx.fillStyle = COLORS.lime;
   ctx.fillText('GAME ON', 64, 316);
@@ -103,7 +104,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
     // Black bib: charcoal panel with a light outline; white bib: paper.
     const color = t ? COLORS.paper : '#7d837e';
     slant(ctx, x, 380, colW, 120, 26, COLORS.paper, t === 1);
-    if (!t) slant(ctx, x + 3, 383, colW - 6, 114, 24, '#171a18', false);
+    if (!t) slant(ctx, x + 3, 383, colW - 6, 114, 24, '#262625', false);
     ctx.fillStyle = t ? COLORS.ink : COLORS.paper;
     ctx.font = '700 20px "Space Mono", monospace';
     ctx.textAlign = t ? 'right' : 'left';
@@ -121,13 +122,13 @@ export async function renderShareImage({ lineups, names, balance, match, format 
     team.forEach((p, i) => {
       const sub = i >= nStart;
       const y = 528 + i * ROW + (sub ? 60 : 0);
-      ctx.fillStyle = sub ? 'rgba(22,28,24,0.4)' : 'rgba(22,28,24,0.8)';
+      ctx.fillStyle = sub ? 'rgba(48,48,48,0.5)' : 'rgba(48,48,48,0.95)';
       ctx.fillRect(x, y, colW, ROW - 12);
       ctx.fillStyle = color;
       ctx.fillRect(t ? x + colW - 8 : x, y, 8, ROW - 12);
       const isKeeper = p === keepers[t];
       ctx.font = '42px Anton, Impact, sans-serif';
-      ctx.fillStyle = sub ? 'rgba(236,234,223,0.7)' : COLORS.paper;
+      ctx.fillStyle = sub ? 'rgba(255,248,202,0.7)' : COLORS.paper;
       const label = `${isKeeper ? '🧤 ' : ''}${p.name.toUpperCase()}`;
       ctx.fillText(fit(ctx, label, colW - 120), t ? x + colW - 28 : x + 28, y + 50);
       const tag = isKeeper ? 'GK' : sub ? '' : (p.def === 3 || p.pos === 'CB' || p.alt === 'CB') ? 'CB' : '';
@@ -166,7 +167,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
   ctx.fillStyle = COLORS.paper;
   ctx.fillRect(0, fy - 40, W, 160);
   ctx.fillStyle = COLORS.ink;
-  ctx.font = '84px Bungee, Anton, Impact, sans-serif';
+  ctx.font = '84px "Dela Gothic One", Anton, Impact, sans-serif';
   const pct = `${balance}%`;
   ctx.fillText(pct, 64, fy + 64);
   const bw = ctx.measureText(pct).width;
@@ -176,7 +177,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
   ctx.save();
   ctx.translate(W / 2 + 150, fy - 40);
   ctx.rotate(-0.12);
-  ctx.font = '40px "Permanent Marker", cursive';
+  ctx.font = '40px "Bagel Fat One", Anton, sans-serif';
   const label = verdict(balance);
   const lw = ctx.measureText(label).width + 36;
   ctx.fillStyle = COLORS.ink;

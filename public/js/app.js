@@ -408,7 +408,8 @@ function home() {
     <section class="screen home">
       ${appbar('home')}
       <div class="hero" style="--d:1">
-        <h1 class="display headline"><span>Game</span><span>On<i>.</i></span></h1>
+        <svg class="wiggle" viewBox="0 0 280 160" aria-hidden="true"><path d="M8 140 C 50 140, 40 30, 92 44 S 130 140, 172 104 S 206 12, 272 24" fill="none" stroke="var(--accent)" stroke-width="16" stroke-linecap="round"/></svg>
+        <div class="badge-logo"><h1 class="headline"><span>Game</span><span>On</span></h1></div>
         <span class="sticker">Fair teams<br>every week</span>
       </div>
       <div class="match-card ${mi.off ? 'off' : ''}" style="--d:2">
