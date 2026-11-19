@@ -8,8 +8,10 @@ const DOTS = ['⚫', '⚪'];
 // Keeper first, then the other starters.
 const starting = (u) => (u.keeper ? [u.keeper, ...u.starters.filter((p) => p !== u.keeper)] : u.starters);
 
-export function shareText({ lineups, names, balance, date, format }) {
-  const lines = [`⚽ GAME ON · ${date} · ${format}-a-side`, ''];
+const verdict = (balance) => (balance >= 96 ? 'DEAD EVEN!' : balance >= 90 ? 'VERY FAIR' : balance >= 80 ? 'FAIR' : 'LOPSIDED');
+
+export function shareText({ lineups, names, balance, match, format }) {
+  const lines = [`⚽ GAME ON · ${match} · ${format}-a-side`, ''];
   lineups.forEach((u, t) => {
     lines.push(`${DOTS[t]} TEAM ${names[t].toUpperCase()}`);
     starting(u).forEach((p) => lines.push(`${p === u.keeper ? '🧤' : '•'} ${p.name}`));
@@ -39,11 +41,13 @@ function slant(ctx, x, y, w, hgt, cut, color, flip = false) {
   ctx.fill();
 }
 
-export async function renderShareImage({ lineups, names, balance, date, format }) {
+export async function renderShareImage({ lineups, names, balance, match, format }) {
   const teams = lineups.map((u) => [...starting(u), ...u.subs]);
   const keepers = lineups.map((u) => u.keeper);
   await Promise.all([
     document.fonts.load('160px Anton'),
+    document.fonts.load('150px Bungee'),
+    document.fonts.load('48px "Permanent Marker"'),
     document.fonts.load('700 24px "Space Mono"'),
   ]).catch(() => {});
 
@@ -76,18 +80,21 @@ export async function renderShareImage({ lineups, names, balance, date, format }
   ctx.fillStyle = COLORS.paper;
   ctx.font = '700 26px "Space Mono", monospace';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillText(`${date}  ·  ${format}-A-SIDE`, 64, 96);
+  ctx.fillText(fit(ctx, match, W - 300), 64, 96);
   ctx.textAlign = 'right';
   ctx.fillStyle = COLORS.lime;
-  ctx.fillText('● MATCHDAY', W - 64, 96);
+  ctx.fillText(`● ${format}-A-SIDE`, W - 64, 96);
   ctx.textAlign = 'left';
 
-  ctx.font = '210px Anton, Impact, sans-serif';
-  ctx.fillStyle = COLORS.paper;
-  ctx.fillText('GAME ON', 56, 320);
-  const w = ctx.measureText('GAME ON').width;
+  ctx.font = '150px Bungee, Anton, Impact, sans-serif';
+  // Hard offset shadow, sticker style.
   ctx.fillStyle = COLORS.lime;
-  ctx.fillText('.', 56 + w, 320);
+  ctx.fillText('GAME ON', 64, 316);
+  ctx.fillStyle = COLORS.paper;
+  ctx.fillText('GAME ON', 56, 308);
+  const w = ctx.measureText('GAME ON').width;
+  ctx.fillStyle = COLORS.orange;
+  ctx.fillText('.', 56 + w, 308);
 
   // Teams.
   const colW = (W - 64 * 2 - 24) / 2;
@@ -154,16 +161,32 @@ export async function renderShareImage({ lineups, names, balance, date, format }
   ctx.fillText('VS', 0, 22);
   ctx.restore();
 
-  // Footer: balance + barcode.
+  // Footer: balance + verdict sticker + barcode.
   const fy = H - 120;
   ctx.fillStyle = COLORS.paper;
   ctx.fillRect(0, fy - 40, W, 160);
   ctx.fillStyle = COLORS.ink;
-  ctx.font = '96px Anton, Impact, sans-serif';
-  ctx.fillText(`${balance}%`, 64, fy + 62);
-  const bw = ctx.measureText(`${balance}%`).width;
-  ctx.font = '700 24px "Space Mono", monospace';
-  ctx.fillText('BALANCED', 64 + bw + 20, fy + 58);
+  ctx.font = '84px Bungee, Anton, Impact, sans-serif';
+  const pct = `${balance}%`;
+  ctx.fillText(pct, 64, fy + 64);
+  const bw = ctx.measureText(pct).width;
+  ctx.font = '700 22px "Space Mono", monospace';
+  ctx.fillText('SQUAD', 64 + bw + 20, fy + 30);
+  ctx.fillText('BALANCE', 64 + bw + 20, fy + 62);
+  ctx.save();
+  ctx.translate(W / 2 + 150, fy - 40);
+  ctx.rotate(-0.12);
+  ctx.font = '40px "Permanent Marker", cursive';
+  const label = verdict(balance);
+  const lw = ctx.measureText(label).width + 36;
+  ctx.fillStyle = COLORS.ink;
+  ctx.fillRect(-lw / 2 + 6, -30, lw, 64);
+  ctx.fillStyle = COLORS.lime;
+  ctx.fillRect(-lw / 2, -36, lw, 64);
+  ctx.fillStyle = COLORS.ink;
+  ctx.textAlign = 'center';
+  ctx.fillText(label, 0, 10);
+  ctx.restore();
   let bx = W - 64 - 260;
   const pattern = [3, 1, 2, 1, 4, 2, 1, 3, 1, 1, 2, 4, 1, 2, 3, 1, 2, 1, 1, 3, 2, 1, 4, 1, 2];
   pattern.forEach((pw, i) => {

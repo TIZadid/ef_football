@@ -1,11 +1,25 @@
-// Team balancing.
+// Team balancing, modelled the way a manager reads a small-sided game.
 //
-// A player: { id, name, att, def, phy, fb, gk, pos, alt }
-//   ratings are 1–3; pos is the main position and alt an optional backup,
-//   each one of POSITIONS.
+// A player: { id, name, att, def, phy, fb, gk, pos, alt, empty? }
+//   ratings are 1–3 (the app fills empty stats with the group average and
+//   lists them in `empty`); pos is the main position and alt an optional
+//   backup, each one of POSITIONS (pos may be null when unknown).
 //
 // Each team has a starting line-up of `format` players (5-a-side by default);
-// the rest are subs.
+// the rest are rotating subs.
+//
+// How strength is measured
+//   - Every outfield starter gets a role (CB, WING, MID, ST, or ANY when the
+//     position is unknown). The role decides how much of each rating counts:
+//     a striker's attack counts in full, a centre-back's barely; a CB's
+//     defense counts in full, a striker's barely. Playing off the main
+//     position costs a little (backup 90%, out of position less).
+//   - Team units: Attack, Back line (outfield defense + keeper), Engine
+//     (physicality + tracking back) and Keeper. The keeper is weighted more
+//     the smaller the game.
+//   - Expected strength blends the starting line-up with the rotation: subs
+//     share minutes, so a weak bench drags a team down.
+//   - Win chance comes from the strength gap through a logistic curve.
 //
 // Hard rules (always enforced, or the split is rejected):
 //   - team sizes differ by at most one
@@ -15,63 +29,128 @@
 // satisfy them; otherwise the least-bad split wins and a warning is returned):
 //   - a CB: CB as main/backup position, or DEF 3
 //   - a central player: MID as main/backup position
-// Soft goals (minimised by the cost function), starting line-ups first and
-// whole teams second:
-//   - attack, defense, physicality, tracking back and overall strength balanced
-//   - the team with the weaker keeper gets the stronger defense, including
+// Soft goals (the cost function):
+//   - expected strength equal (the main term), then each unit equal
+//   - stars split: the top three compared best vs best, second vs second…
+//   - the team with the weaker keeper gets the stronger back line, including
 //     the best defender when keepers differ
-//   - position coverage (wing, mid, striker) balanced
-//   - players who prefer GK spread across the teams
-//   - players with unknown (empty) stats spread across the teams, so neither
-//     team carries all the guesswork
+//   - the team whose players track back less gets the better CB (and poor
+//     tracking back in front of a weak CB counts as leaking goals)
+//   - wing / mid / striker roles spread evenly
+//   - players who prefer GK, and players with unknown stats, spread out
+// Among near-optimal splits the pick prefers fresh match-ups (fewer repeat
+// teammates from recent games), with some randomness for "Regenerate".
 
 export const POSITIONS = ['GK', 'CB', 'WING', 'MID', 'ST'];
+const OUTFIELD = ['CB', 'WING', 'MID', 'ST'];
 
-const W = {
-  att: 1,
-  def: 1,
-  phy: 0.7,
-  fb: 0.7,
-  total: 1.2,
-  gk: 1.5, // how much a keeper's rating counts toward the team's defense
-  wing: 0.4,
-  mid: 0.4,
-  st: 0.4,
-  weakKeeperBestDefender: 3,
-  bench: 0.5, // whole-team balance, relative to the starting line-ups
-  gkSpread: 4,
-  unknown: 3, // per fully-unknown player of difference between the teams
+// How much of each rating a role turns into attack / defense.
+const ROLE = {
+  CB: { att: 0.3, def: 1.0, fb: 0.3 },
+  WING: { att: 0.9, def: 0.45, fb: 0.5 },
+  MID: { att: 0.65, def: 0.7, fb: 0.5 },
+  ST: { att: 1.0, def: 0.25, fb: 0.35 },
+  ANY: { att: 0.7, def: 0.6, fb: 0.45 },
 };
 
+const W = {
+  strength: 5, // expected strength gap: the main thing
+  atk: 1,
+  back: 1,
+  eng: 0.6,
+  stars: 0.3, // player-impact gap for the top three, best vs best
+  top: 0.6, // best player vs best player
+  role: 0.4, // wing / mid / striker spread
+  weakKeeperBestDefender: 3,
+  lazyNeedsCB: 2.5,
+  leak: 0.6, // defense lost per point of missing tracking back × CB weakness
+  gkSpread: 4,
+  unknown: 3, // per fully-unknown player of difference between the teams
+  rotation: 0.3, // share of expected strength that comes from rotating subs
+};
+
+const TAU = 4; // logistic scale: a strength gap of 1 ≈ 56% win chance
 const EXHAUSTIVE_LIMIT = 18;
 
 export const plays = (p, pos) => (p.pos === pos ? 1 : p.alt === pos ? 0.5 : 0);
 export const isCB = (p) => p.def === 3 || plays(p, 'CB') > 0;
 export const isMid = (p) => plays(p, 'MID') > 0;
-const overall = (p) => p.att + p.def + p.phy + p.fb;
-// 0 for a fully rated player, 1 when every stat and the position are empty.
-// `empty` lists the stats the caller filled in with a stand-in value.
-export const unknown = (p) => ((p.empty?.length ?? 0) + (p.pos == null ? 1 : 0)) / 6;
+// Role-free individual quality, used for star balance and picking starters.
+export const impact = (p) => p.att + p.def + 0.8 * p.phy + 0.7 * p.fb;
+// 0 for a fully rated player, 1 when every stat is empty. (No position on its
+// own isn't unknown: it just means the player has no set role.)
+export const unknown = (p) => (p.empty?.length ?? 0) / 5;
+export const keeperWeight = (format) => (format <= 6 ? 2.2 : format <= 8 ? 1.8 : 1.5);
 
-function pickKeeper(team, pinned) {
+// How suited a player is to going in goal: GK rating, plus a bonus for
+// wanting to play there (an unknown rating counts as 1.5).
+export const keeperScore = (p) => (p.empty?.includes('gk') ? 1.5 : p.gk) + 1.5 * plays(p, 'GK');
+
+// Who goes in goal: whoever makes the team strongest, the way a manager
+// decides. Weighs their keeping (with a bonus for wanting to play there)
+// against what the outfield loses without them, so a star with a decent GK
+// rating isn't wasted in goal when a willing keeper is nearly as good.
+const IMPACT_TO_STRENGTH = 0.55; // a typical outfielder's impact → strength
+function pickKeeper(team, pinned, format = 5) {
   if (!team.length) return null;
   const pin = team.find((p) => pinned.has(p.id));
   if (pin) return pin;
-  let best = team[0];
+  const K = keeperWeight(format);
+  const slots = Math.max(0, Math.min(format, team.length) - 1);
+  const sorted = team.map(impact).sort((a, b) => b - a);
+  const top = sorted.slice(0, slots).reduce((a, b) => a + b, 0);
+  let best = null, bestValue = -Infinity;
   for (const p of team) {
-    const a = plays(p, 'GK'), b = plays(best, 'GK');
-    // GK preference, then GK rating; on a tie keep the stronger outfielder outfield.
-    if (a > b || (a === b && (p.gk > best.gk || (p.gk === best.gk && overall(p) < overall(best))))) best = p;
+    const own = impact(p);
+    // Outfield impact left when p keeps: if p would have started outfield,
+    // the next best player takes the spot.
+    const inTop = own >= (sorted[slots - 1] ?? Infinity);
+    const outfield = inTop ? top - own + (sorted[slots] ?? 0) : top;
+    const value = K * keeperScore(p) + IMPACT_TO_STRENGTH * outfield;
+    if (value > bestValue + 1e-9) { best = p; bestValue = value; }
   }
   return best;
 }
 
+// The players best suited to keep goal, best first.
+export function suggestKeepers(players, count = 2) {
+  return players.slice().sort((a, b) => keeperScore(b) - keeperScore(a) || impact(a) - impact(b)).slice(0, count);
+}
+
+function naturalRole(p) {
+  if (OUTFIELD.includes(p.pos)) return { role: p.pos, fit: 1 };
+  if (OUTFIELD.includes(p.alt)) return { role: p.alt, fit: 0.9 };
+  // A keeper playing outfield, or someone whose position nobody knows.
+  return { role: 'ANY', fit: p.pos === 'GK' ? 0.85 : 0.95 };
+}
+
+// Give each outfield starter a role, making sure the line-up has a CB and a MID
+// whenever someone can cover it (without taking the only player of another
+// key role).
+export function assignRoles(outfield) {
+  const roles = new Map(outfield.map((p) => [p, naturalRole(p)]));
+  const count = (role) => [...roles.values()].filter((r) => r.role === role).length;
+  const cover = (role, can, fitOf, rank) => {
+    if (count(role)) return;
+    const cands = outfield.filter((p) => {
+      const r = roles.get(p).role;
+      return can(p) && !((r === 'CB' || r === 'MID') && count(r) === 1);
+    });
+    if (!cands.length) return;
+    const p = cands.sort((a, b) => rank(b) - rank(a))[0];
+    roles.set(p, { role, fit: fitOf(p) });
+  };
+  cover('CB', isCB, (p) => (plays(p, 'CB') ? 0.9 : 0.85), (p) => p.def * 2 + plays(p, 'CB'));
+  cover('MID', isMid, () => 0.9, (p) => impact(p));
+  return roles;
+}
+
 // Choose a team's starters: keeper, a CB, a MID, then the strongest of the rest.
 export function lineup(team, { format = 5, keeperMode = 'auto', keepers = [] } = {}) {
-  const keeper = keeperMode !== 'none' ? pickKeeper(team, new Set(keepers)) : null;
+  const keeper = keeperMode !== 'none' ? pickKeeper(team, new Set(keepers), format) : null;
   if (team.length <= format) return { starters: team.slice(), subs: [], keeper };
   const starters = keeper ? [keeper] : [];
-  const rest = team.filter((p) => p !== keeper).sort((a, b) => overall(b) - overall(a));
+  const rest = team.filter((p) => p !== keeper).sort((a, b) => impact(b) - impact(a));
   const take = (fits, rank) => {
     if (starters.length >= format || starters.some((p) => p !== keeper && fits(p))) return;
     const cands = rest.filter(fits).sort((a, b) => rank(b) - rank(a));
@@ -79,75 +158,128 @@ export function lineup(team, { format = 5, keeperMode = 'auto', keepers = [] } =
     starters.push(cands[0]);
     rest.splice(rest.indexOf(cands[0]), 1);
   };
-  take(isCB, (p) => plays(p, 'CB') * 10 + p.def + overall(p) / 100);
-  take(isMid, (p) => plays(p, 'MID') * 10 + overall(p) / 100);
+  take(isCB, (p) => plays(p, 'CB') * 10 + p.def + impact(p) / 100);
+  take(isMid, (p) => plays(p, 'MID') * 10 + impact(p) / 100);
   while (starters.length < format && rest.length) starters.push(rest.shift());
   const chosen = new Set(starters);
   return { starters, subs: team.filter((p) => !chosen.has(p)), keeper };
 }
 
-export function teamStats(team, keeper) {
+function outfieldValue(p, role, fit) {
+  const w = ROLE[role];
+  return {
+    atk: fit * (w.att * p.att + 0.15 * p.phy),
+    def: fit * (w.def * p.def + w.fb * p.fb),
+    eng: 0.6 * p.phy + 0.4 * p.fb,
+  };
+}
+
+// Units for a line-up (`starters`, with `keeper` in goal) plus the rotation
+// strength of the whole team.
+export function teamStats(starters, keeper, { format = 5, team = starters } = {}) {
+  const K = keeperWeight(format);
+  const outfield = starters.filter((p) => p !== keeper);
+  const roles = assignRoles(outfield);
   const s = {
     size: team.length,
     keeper,
-    att: 0, def: 0, phy: 0, fb: 0,
+    roles,
+    att: 0, def: 0, phy: 0, fb: 0, // raw rating sums of outfield starters
+    atk: 0, defU: 0, eng: 0,
     gk: keeper ? keeper.gk : 0,
     wing: 0, mid: 0, st: 0,
     cbs: 0, mids: 0, maxDef: 0,
     gkFans: team.filter((p) => p.pos === 'GK').length,
     unknown: team.reduce((sum, p) => sum + unknown(p), 0),
+    impacts: outfield.map(impact).sort((a, b) => b - a),
   };
-  for (const p of team) {
-    if (p === keeper) continue;
+  for (const p of outfield) {
+    const { role, fit } = roles.get(p);
+    const v = outfieldValue(p, role, fit);
+    s.atk += v.atk; s.defU += v.def; s.eng += v.eng;
     s.att += p.att; s.def += p.def; s.phy += p.phy; s.fb += p.fb;
-    s.wing += plays(p, 'WING'); s.mid += plays(p, 'MID'); s.st += plays(p, 'ST');
-    if (isCB(p)) s.cbs++;
-    if (isMid(p)) s.mids++;
+    if (role === 'WING') s.wing++;
+    if (role === 'MID') { s.mid++; s.mids++; }
+    if (role === 'ST') s.st++;
+    if (role === 'CB') s.cbs++;
     if (p.def > s.maxDef) s.maxDef = p.def;
   }
-  s.defense = s.def + W.gk * s.gk; // outfield defense plus the keeper behind it
-  s.total = s.att + s.def + s.phy + s.fb + W.gk * s.gk;
+  // Tracking back of the non-CB outfielders, and how good the CB behind them is.
+  const front = outfield.filter((p) => roles.get(p).role !== 'CB');
+  const cbsList = outfield.filter((p) => roles.get(p).role === 'CB');
+  s.track = front.length ? front.reduce((sum, p) => sum + p.fb, 0) / front.length : 2;
+  s.cbQ = cbsList.length ? Math.max(...cbsList.map((p) => p.def + 0.3 * (p.phy - 2))) : 1;
+  // A front line that doesn't track back leaves the CB exposed: the weaker
+  // the CB, the more it leaks.
+  s.defU -= W.leak * Math.max(0, 2.2 - s.track) * Math.max(0, 3 - s.cbQ);
+  s.back = s.defU + K * s.gk;
+  s.start = s.atk + s.defU + 0.6 * s.eng + K * s.gk;
+
+  // Rotation: subs share minutes with the outfield starters, so the average
+  // outfielder on the pitch is the average of the whole outfield squad.
+  const squadOutfield = team.filter((p) => p !== keeper);
+  if (squadOutfield.length > outfield.length && outfield.length) {
+    const per = squadOutfield.reduce((sum, p) => {
+      const { role, fit } = roles.get(p) ?? naturalRole(p);
+      const v = outfieldValue(p, role, fit);
+      return sum + v.atk + v.def + 0.6 * v.eng;
+    }, 0) / squadOutfield.length;
+    s.rotation = per * outfield.length + K * s.gk;
+    s.expected = (1 - W.rotation) * s.start + W.rotation * s.rotation;
+  } else {
+    s.rotation = s.start;
+    s.expected = s.start;
+  }
+  s.total = s.expected;
   return s;
 }
 
 function pairCost(a, b, useKeepers) {
   let cost =
-    W.att * Math.abs(a.att - b.att) +
-    W.def * Math.abs(a.defense - b.defense) +
-    W.phy * Math.abs(a.phy - b.phy) +
-    W.fb * Math.abs(a.fb - b.fb) +
-    W.total * Math.abs(a.total - b.total) +
-    W.wing * Math.abs(a.wing - b.wing) +
-    W.mid * Math.abs(a.mid - b.mid) +
-    W.st * Math.abs(a.st - b.st);
+    W.strength * Math.abs(a.expected - b.expected) +
+    W.atk * Math.abs(a.atk - b.atk) +
+    W.back * Math.abs(a.back - b.back) +
+    W.eng * Math.abs(a.eng - b.eng) +
+    W.role * (Math.abs(a.wing - b.wing) + Math.abs(a.mid - b.mid) + Math.abs(a.st - b.st));
+  const n = Math.min(a.impacts.length, b.impacts.length, 3);
+  let stars = 0;
+  for (let i = 0; i < n; i++) stars += Math.abs(a.impacts[i] - b.impacts[i]);
+  cost += W.stars * stars + W.top * Math.abs((a.impacts[0] ?? 0) - (b.impacts[0] ?? 0));
   if (useKeepers && a.gk !== b.gk) {
     const [weak, strong] = a.gk < b.gk ? [a, b] : [b, a];
     if (weak.maxDef < strong.maxDef) cost += W.weakKeeperBestDefender;
   }
+  if (Math.abs(a.track - b.track) > 0.25) {
+    const [lazy, busy] = a.track < b.track ? [a, b] : [b, a];
+    if (lazy.cbQ < busy.cbQ) cost += W.lazyNeedsCB;
+  }
+  if (useKeepers) cost += W.gkSpread * Math.max(0, Math.abs(a.gkFans - b.gkFans) - 1);
+  cost += W.unknown * Math.abs(a.unknown - b.unknown);
   return cost;
 }
 
 // Score a split whose line-ups are already chosen.
-function score(ups, teams, useKeepers) {
-  const start = ups.map((u) => teamStats(u.starters, u.keeper));
-  const full = teams.map((t, i) => teamStats(t, ups[i].keeper));
-  let cost = pairCost(start[0], start[1], useKeepers);
-  if (ups[0].subs.length || ups[1].subs.length) cost += W.bench * pairCost(full[0], full[1], useKeepers);
-  if (useKeepers) cost += W.gkSpread * Math.max(0, Math.abs(full[0].gkFans - full[1].gkFans) - 1);
-  cost += W.unknown * (Math.abs(full[0].unknown - full[1].unknown) + 0.5 * Math.abs(start[0].unknown - start[1].unknown));
+function score(ups, teams, useKeepers, format) {
+  const stats = ups.map((u, i) => teamStats(u.starters, u.keeper, { format, team: teams[i] }));
+  const cost = pairCost(stats[0], stats[1], useKeepers);
   const violations = {
-    cb: (start[0].cbs < 1) + (start[1].cbs < 1),
-    mid: (start[0].mids < 1) + (start[1].mids < 1),
+    cb: (stats[0].cbs < 1) + (stats[1].cbs < 1),
+    mid: (stats[0].mids < 1) + (stats[1].mids < 1),
   };
-  return { cost, violations, structural: violations.cb + violations.mid, start, full };
+  return { cost, violations, structural: violations.cb + violations.mid, stats };
 }
 
-const pct = (a, b) => Math.round((100 * Math.min(a.total, b.total)) / Math.max(1, a.total, b.total));
+export function winChance(a, b) {
+  const p = 1 / (1 + Math.exp(-(a.expected - b.expected) / TAU));
+  const pa = Math.round(p * 100);
+  return [pa, 100 - pa];
+}
 
 // Score a split. For a hand-edited result pass `starters` ([idsA, idsB]) and
 // optionally `goal` ([idA | null, idB | null]) to fix who keeps.
 export function evaluate(teamA, teamB, opts = {}) {
   const keeperMode = opts.keeperMode ?? 'auto';
+  const format = opts.format ?? 5;
   const useKeepers = keeperMode !== 'none';
   const teams = [teamA, teamB];
   const ups = teams.map((team, i) => {
@@ -155,10 +287,10 @@ export function evaluate(teamA, teamB, opts = {}) {
     const ids = new Set(opts.starters[i]);
     const starters = team.filter((p) => ids.has(p.id));
     const pinned = new Set([opts.goal?.[i], ...(opts.keepers ?? [])].filter(Boolean));
-    const keeper = useKeepers ? pickKeeper(starters, pinned) : null;
+    const keeper = useKeepers ? pickKeeper(starters, pinned, format) : null;
     return { starters, subs: team.filter((p) => !ids.has(p.id)), keeper };
   });
-  const { cost, violations, start, full } = score(ups, teams, useKeepers);
+  const { cost, violations, stats } = score(ups, teams, useKeepers, format);
   const warnings = [];
   if (violations.cb) warnings.push('A starting line-up has no CB (CB position or DEF 3).');
   if (violations.mid) warnings.push('A starting line-up has no MID.');
@@ -171,13 +303,14 @@ export function evaluate(teamA, teamB, opts = {}) {
   for (const [x, y] of opts.apart ?? []) {
     if (side.has(x) && side.has(y) && side.get(x) === side.get(y)) warnings.push('An "apart" rule is broken.');
   }
+  const chance = winChance(stats[0], stats[1]);
   return {
     lineups: ups,
-    stats: start,
-    fullStats: full,
+    stats,
     cost,
-    balance: pct(start[0], start[1]),
-    fullBalance: pct(full[0], full[1]),
+    chance,
+    // 100 = a coin flip; each point of win-chance edge costs two.
+    balance: 100 - 2 * Math.abs(chance[0] - 50),
     warnings,
   };
 }
@@ -188,17 +321,38 @@ function signature(teamA, teamB) {
   return `${x}|${y}`;
 }
 
+// How many teammate pairs in a split were also teammates recently
+// (newer games count more). `history` is newest first, as [[idsA], [idsB]].
+export function repeats(teams, history = []) {
+  let total = 0;
+  history.forEach((past, age) => {
+    const weight = 1 / (age + 1);
+    const sideOf = new Map();
+    past.forEach((ids, t) => ids.forEach((id) => sideOf.set(id, t)));
+    for (const team of teams) {
+      for (let i = 0; i < team.length; i++) {
+        for (let j = i + 1; j < team.length; j++) {
+          const a = sideOf.get(team[i].id), b = sideOf.get(team[j].id);
+          if (a !== undefined && a === b) total += weight;
+        }
+      }
+    }
+  });
+  return total;
+}
+
 export class BalanceError extends Error {}
 
 // Returns { teams: [A, B], ...evaluate(), options, signature }.
 // opts: format (players per side on the pitch, default 5),
 //       together, apart (arrays of [idA, idB]), keepers (pinned ids, max 2),
 //       keeperMode ('auto' | 'none'), exclude (a signature to avoid repeating),
-//       rng (for tests), tolerance (how close to optimal a reshuffle may be).
+//       history (recent splits, newest first), rng (for tests),
+//       tolerance (how close to optimal a pick may be).
 export function balance(players, opts = {}) {
   const {
     format = 5, together = [], apart = [], keepers = [], keeperMode = 'auto',
-    exclude = null, rng = Math.random, tolerance = 0.75,
+    exclude = null, history = [], rng = Math.random, tolerance = 1,
   } = opts;
   const n = players.length;
   if (n < 2) throw new BalanceError('Need at least 2 players.');
@@ -228,7 +382,7 @@ export function balance(players, opts = {}) {
     const teams = [[], []];
     sides.forEach((s, i) => teams[s].push(players[i]));
     const ups = teams.map((t) => lineup(t, upOpts));
-    return { teams, ...score(ups, teams, useKeepers) };
+    return { teams, ...score(ups, teams, useKeepers, format) };
   };
 
   let best = null; // { structural, cost }
@@ -273,7 +427,15 @@ export function balance(players, opts = {}) {
 
   let options = pool.filter((c) => signature(c.A, c.B) !== exclude);
   if (!options.length) options = pool;
-  const pick = options[Math.floor(rng() * options.length)];
+  // Prefer the fairest and freshest: weight each option by closeness to the
+  // best cost and by how few recent teammate pairs it repeats.
+  const weights = options.map((c) => Math.exp(-2 * (c.cost - best.cost) - 0.35 * repeats([c.A, c.B], history)));
+  let roll = rng() * weights.reduce((a, b) => a + b, 0);
+  let pick = options[options.length - 1];
+  for (let i = 0; i < options.length; i++) {
+    roll -= weights[i];
+    if (roll <= 0) { pick = options[i]; break; }
+  }
   // Colours carry no meaning; randomise which team gets which.
   const teams = rng() < 0.5 ? [pick.A, pick.B] : [pick.B, pick.A];
   return {

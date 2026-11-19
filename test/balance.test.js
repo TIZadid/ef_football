@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { balance, evaluate, lineup, BalanceError, isCB, isMid, unknown } from '../public/js/balance.js';
+import { balance, evaluate, lineup, BalanceError, isCB, isMid, unknown, suggestKeepers, repeats, teamStats } from '../public/js/balance.js';
 
 let seed = 1;
 const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
@@ -97,7 +97,7 @@ test('weaker keeper gets the better defense', () => {
 test('starting line-ups are close in strength', () => {
   const r = balance(squad, { rng });
   assert.ok(r.balance >= 90, `balance ${r.balance}`);
-  assert.ok(r.fullBalance >= 85, `full balance ${r.fullBalance}`);
+
 });
 
 test('regenerate avoids repeating the previous split when it can', () => {
@@ -168,9 +168,74 @@ test('four unknown players split two and two, in a bigger group too', () => {
   }
 });
 
-test('partly rated players count as partly unknown', () => {
+test('partly rated players count as partly unknown; no position alone is not unknown', () => {
+  assert.equal(unknown({ ...squad[0], pos: null }), 0);
   const half = { ...blank('h'), att: 3, pos: 'ST', empty: ['def', 'phy', 'fb'] };
-  assert.equal(unknown(half), 0.5);
+  assert.equal(unknown(half), 0.6);
   assert.equal(unknown(blank('b')), 1);
   assert.equal(unknown(squad[0]), 0);
+});
+
+test('the two stars go to different teams', () => {
+  const star = (id) => P(id, 3, 3, 3, 3, 1, 'MID');
+  const avg = (id, pos) => P(id, 2, 2, 2, 2, 1, pos);
+  const group = [star('s1'), star('s2'), avg('a1', 'GK'), avg('a2', 'GK'), avg('a3', 'CB'), avg('a4', 'CB'),
+    avg('a5', 'MID'), avg('a6', 'MID'), avg('a7', 'ST'), avg('a8', 'WING')];
+  for (let k = 0; k < 10; k++) {
+    const r = balance(group, { rng });
+    assert.notEqual(sideOf(r, 's1'), sideOf(r, 's2'));
+  }
+});
+
+test('win chance is close to a coin flip for a balanced split', () => {
+  const r = balance(squad, { rng });
+  assert.ok(Math.abs(r.chance[0] - 50) <= 4, `chance ${r.chance}`);
+  assert.equal(r.chance[0] + r.chance[1], 100);
+});
+
+test('a striker adds more attack than a centre-back with the same ratings', () => {
+  const st = P('st', 3, 1, 2, 2, 1, 'ST'), cb = P('cb', 3, 1, 2, 2, 1, 'CB');
+  const a = teamStats([st], null), b = teamStats([cb], null);
+  assert.ok(a.atk > b.atk && a.defU < b.defU);
+});
+
+test('suggested keepers prefer GK position, then GK rating', () => {
+  const ks = suggestKeepers(squad);
+  assert.deepEqual(ks.map((p) => p.id), ['e', 'k']);
+});
+
+test('repeats counts recent teammate pairs, newest weighted most', () => {
+  const t = [[squad[0], squad[1]], [squad[2], squad[3]]];
+  assert.equal(repeats(t, [[['a', 'b'], ['c', 'd']]]), 2);
+  assert.equal(repeats(t, [[['a', 'c'], ['b', 'd']]]), 0);
+  assert.equal(repeats(t, [[['x'], ['y']], [['a', 'b'], ['c', 'd']]]), 1);
+});
+
+test('freshness: with history, picks repeat fewer teammates than ignoring it', () => {
+  const history = [];
+  let fresh = 0, stale = 0;
+  for (let k = 0; k < 8; k++) {
+    const h = balance(squad, { rng, history });
+    const plain = balance(squad, { rng });
+    fresh += repeats(h.teams, history);
+    stale += repeats(plain.teams, history);
+    history.unshift(h.teams.map((t) => t.map((p) => p.id)));
+  }
+  assert.ok(fresh <= stale, `fresh ${fresh} stale ${stale}`);
+});
+
+test('the team that tracks back less gets the better CB', () => {
+  const group = [
+    P('gk1', 1, 1, 1, 1, 3, 'GK'), P('gk2', 1, 1, 1, 1, 3, 'GK'),
+    P('cbGood', 1, 3, 3, 2, 1, 'CB'), P('cbOk', 2, 2, 2, 2, 1, 'CB'),
+    P('lazy1', 3, 1, 2, 1, 1, 'ST'), P('lazy2', 3, 1, 2, 1, 1, 'WING', 'MID'),
+    P('work1', 2, 2, 2, 3, 1, 'MID'), P('work2', 2, 2, 2, 3, 1, 'MID'),
+  ];
+  for (let k = 0; k < 10; k++) {
+    const r = balance(group, { rng, format: 4 });
+    const [a, b] = r.stats;
+    if (Math.abs(a.track - b.track) <= 0.25) continue;
+    const lazy = a.track < b.track ? a : b, busy = lazy === a ? b : a;
+    assert.ok(lazy.cbQ >= busy.cbQ, `lazy cb ${lazy.cbQ} vs ${busy.cbQ}`);
+  }
 });
