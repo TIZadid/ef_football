@@ -1,7 +1,7 @@
 // Group-chat exports: a plain-text line-up and a poster-style PNG.
 
 const COLORS = {
-  turf1: '#1A0806', lime: '#F58F1F', orange: '#457534', paper: '#FFF8CA', ink: '#161412',
+  turf1: '#1A0806', lime: '#CDE3E8', orange: '#8A1517', paper: '#FFF8CA', ink: '#161412',
 };
 const DOTS = ['⚫', '⚪'];
 
@@ -47,7 +47,6 @@ export async function renderShareImage({ lineups, names, balance, match, format 
   await Promise.all([
     document.fonts.load('160px Anton'),
     document.fonts.load('150px "Bagel Fat One"'),
-    document.fonts.load('84px "Dela Gothic One"'),
     document.fonts.load('40px "Bagel Fat One"'),
     document.fonts.load('700 24px "Space Mono"'),
   ]).catch(() => {});
@@ -156,7 +155,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
   ctx.fillStyle = COLORS.paper;
   ctx.fillRect(0, fy - 40, W, 160);
   ctx.fillStyle = COLORS.ink;
-  ctx.font = '84px "Dela Gothic One", Anton, Impact, sans-serif';
+  ctx.font = '84px "Bagel Fat One", Anton, Impact, sans-serif';
   const pct = `${balance}%`;
   ctx.fillText(pct, 64, fy + 64);
   const bw = ctx.measureText(pct).width;

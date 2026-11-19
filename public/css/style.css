@@ -1,6 +1,6 @@
 :root {
-  /* Mix of looks A, B and D: basalt + tangerine + leaf green (B), lemon chiffon,
-     botticelli and rosewood (A), bubble-letter badge and orange wiggle (D). */
+  /* Looks A and D: coffee bean, lemon chiffon, rosewood and botticelli (A),
+     bubble-letter badge with an orange wiggle (D). */
   --bg: #1A0806;         /* coffee bean, darker */
   --panel: #2A110D;
   --panel-2: #36180F;
@@ -8,15 +8,16 @@
   --line: rgba(255, 248, 202, 0.13);
   --paper: #FFF8CA;
   --ink: #161412;
-  --accent: #F58F1F;      /* tangerine */
-  --accent-deep: #d9760c;
-  --accent-2: #457534;    /* leaf green */
+  --accent: #FFF8CA;      /* lemon chiffon */
+  --accent-deep: #e8dc9a;
+  --accent-2: #8A1517;    /* rosewood, lifted a touch to read on the dark ground */
+  --wiggle: #EE5A1E;
   --guest: #CDE3E8;       /* botticelli */
   --warn: #6B0B0C;        /* rosewood */
-  --sea: #7D8285;
+  --sea: rgba(255, 248, 202, 0.45);
   --muted: rgba(255, 248, 202, 0.62);
   --logo: "Bagel Fat One", "Anton", sans-serif;
-  --display: "Dela Gothic One", "Anton", Impact, sans-serif;
+  --display: "Bagel Fat One", "Anton", Impact, sans-serif;
   --cond: "Anton", Impact, "Arial Narrow", sans-serif;
   --body: "Bricolage Grotesque", system-ui, sans-serif;
   --mono: "Space Mono", ui-monospace, monospace;
@@ -197,7 +198,7 @@ button[disabled] { cursor: default; }
 .match-card .label { opacity: 0.6; }
 .match-when { font-family: var(--display); font-size: clamp(30px, 9vw, 46px); margin: 4px 0 0; line-height: 1; }
 .match-where { font-family: var(--cond); font-size: 24px; text-transform: uppercase; margin: 2px 0 12px; }
-.match-where span:last-child { background: var(--accent); padding: 0 6px; }
+.match-where span:last-child { background: var(--guest); padding: 0 6px; }
 .match-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .match-card .chip { background: transparent; border-color: rgba(10, 11, 10, 0.3); color: var(--ink); }
 .match-card.off { box-shadow: 6px 6px 0 var(--accent-2); }
@@ -346,9 +347,9 @@ button[disabled] { cursor: default; }
   font-family: var(--cond); font-size: 18px; text-transform: uppercase;
   transition: transform 0.2s var(--ease-spring), background 0.15s, box-shadow 0.15s;
 }
-.pair-chip.on { background: var(--accent); box-shadow: 3px 3px 0 var(--ink); transform: rotate(-3deg); }
+.pair-chip.on { background: var(--guest); box-shadow: 3px 3px 0 var(--ink); transform: rotate(-3deg); }
 .pair-preview { font-size: 17px; min-height: 26px; margin: 0; }
-.pair-preview b { font-family: var(--cond); font-weight: 400; text-transform: uppercase; background: var(--accent); padding: 0 4px; }
+.pair-preview b { font-family: var(--cond); font-weight: 400; text-transform: uppercase; background: var(--guest); padding: 0 4px; }
 
 /* ---------- result: win chance ---------- */
 .odds { padding: 16px; border-radius: 18px; margin-bottom: 14px; background: var(--panel); border: 1.5px solid var(--line); }
@@ -358,14 +359,14 @@ button[disabled] { cursor: default; }
   background: var(--accent-2); color: var(--paper); transform: rotate(-4deg); box-shadow: 3px 3px 0 var(--paper);
   animation: pop 0.45s var(--ease-spring) 0.3s both;
 }
-.verdict.good { background: var(--accent); }
+.verdict.good { background: var(--accent); color: var(--ink); }
 .odds-row { display: flex; align-items: flex-end; justify-content: space-between; margin: 12px 0 10px; }
 .odds .side { display: flex; flex-direction: column; }
 .odds .side.b { align-items: flex-end; }
 .odds .side span { font-family: var(--cond); font-size: 18px; text-transform: uppercase; color: var(--muted); }
 .odds .side b { font-family: var(--display); font-weight: 400; font-size: clamp(46px, 15vw, 76px); line-height: 0.9; }
 .odds .side.a b { color: var(--paper); text-shadow: 3px 3px 0 #3a3f3b; }
-.odds .side.b b { color: var(--paper); text-shadow: 3px 3px 0 var(--accent); }
+.odds .side.b b { color: var(--paper); text-shadow: 3px 3px 0 var(--guest); }
 .odds .side b small { font-size: 0.4em; }
 .vs-label { padding-bottom: 10px; }
 .odds-bar { height: 16px; border-radius: 999px; overflow: hidden; background: var(--paper); border: 2px solid var(--paper); }
@@ -499,7 +500,7 @@ button[disabled] { cursor: default; }
 @keyframes sheet-down { to { transform: translateY(100%); } }
 .grabber { display: block; width: 44px; height: 5px; border-radius: 999px; background: rgba(10, 11, 10, 0.25); margin: 0 auto 10px; }
 .sheet-close { position: absolute; right: 14px; top: 18px; width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--ink); color: var(--ink); font-size: 16px; }
-.sheet h2 { font-size: 32px; margin: 8px 52px 12px 0; overflow-wrap: anywhere; text-shadow: 3px 3px 0 var(--accent); }
+.sheet h2 { font-size: 32px; margin: 8px 52px 12px 0; overflow-wrap: anywhere; text-shadow: 3px 3px 0 var(--guest); }
 .sheet .mono { opacity: 0.65; }
 .sheet .field { display: block; margin-bottom: 12px; }
 .sheet .field .mono { display: block; margin-bottom: 4px; }
