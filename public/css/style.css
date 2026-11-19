@@ -1,14 +1,14 @@
 :root {
-  --turf-1: #0b2213;
-  --turf-2: #0f2d19;
+  --turf-1: #040605;
+  --turf-2: #070a08;
   --lime: #c8f53a;
   --lime-deep: #a6d61c;
   --orange: #ff5b1f;
   --paper: #eceadf;
   --ink: #0a0d0b;
   --muted: rgba(236, 234, 223, 0.62);
-  --line: rgba(236, 234, 223, 0.16);
-  --glass: rgba(6, 14, 9, 0.62);
+  --line: rgba(236, 234, 223, 0.13);
+  --glass: rgba(22, 28, 24, 0.55);
   --display: "Anton", Impact, "Arial Narrow", sans-serif;
   --body: "Bricolage Grotesque", system-ui, sans-serif;
   --mono: "Space Mono", ui-monospace, monospace;
@@ -33,21 +33,21 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .turf {
   position: fixed; inset: 0; z-index: -2;
   background:
-    radial-gradient(ellipse at 50% 30%, transparent 30%, rgba(0, 0, 0, 0.55) 100%),
+    radial-gradient(ellipse at 50% 30%, transparent 25%, rgba(0, 0, 0, 0.7) 100%),
     repeating-linear-gradient(90deg, var(--turf-1) 0 72px, var(--turf-2) 72px 144px);
 }
 .turf::after { /* centre circle + halfway line */
   content: ""; position: absolute; left: 50%; top: 50%;
   width: 70vmin; height: 70vmin; transform: translate(-50%, -50%);
-  border: 2px solid rgba(236, 234, 223, 0.07); border-radius: 50%;
+  border: 2px solid rgba(236, 234, 223, 0.045); border-radius: 50%;
   box-shadow: 0 0 0 1px transparent;
 }
 .turf::before {
   content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
-  border-left: 2px solid rgba(236, 234, 223, 0.06);
+  border-left: 2px solid rgba(236, 234, 223, 0.04);
 }
 .grain {
-  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.18; mix-blend-mode: overlay;
+  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.1; mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
@@ -143,7 +143,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .dock {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
   padding: 14px 16px max(14px, env(safe-area-inset-bottom));
-  background: linear-gradient(to top, rgba(6, 14, 9, 0.98) 72%, transparent);
+  background: linear-gradient(to top, rgba(3, 4, 3, 0.98) 72%, transparent);
 }
 .dock-inner {
   max-width: 760px; margin: 0 auto; display: flex; align-items: center; gap: 12px;
@@ -367,7 +367,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 
 /* ---------- bottom sheet ---------- */
 .backdrop {
-  position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.6);
+  position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.75);
   animation: fade 0.25s both;
 }
 .backdrop.closing { animation: fade 0.25s reverse both; }
@@ -431,7 +431,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .bench-label { margin: 12px 4px 4px; font-size: 10px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
 .bench-label::after { content: ""; flex: 1; border-top: 1.5px dashed var(--line); }
 .team.b .bench-label { flex-direction: row-reverse; }
-.bench .slot { opacity: 0.72; background: rgba(6, 14, 9, 0.4); border-style: dotted; }
+.bench .slot { opacity: 0.72; background: rgba(22, 28, 24, 0.25); border-style: dotted; }
 .edit-hint {
   display: flex; align-items: center; gap: 10px; margin: 14px 0 6px;
   font-size: 14px; color: var(--muted);

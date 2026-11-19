@@ -1,7 +1,7 @@
 // Group-chat exports: a plain-text line-up and a poster-style PNG.
 
 const COLORS = {
-  turf1: '#0b2213', turf2: '#0f2d19', lime: '#c8f53a', orange: '#ff5b1f', paper: '#eceadf', ink: '#0a0d0b',
+  turf1: '#040605', turf2: '#070a08', lime: '#c8f53a', orange: '#ff5b1f', paper: '#eceadf', ink: '#0a0d0b',
 };
 const DOTS = ['🟢', '🟠'];
 
@@ -67,7 +67,7 @@ export async function renderShareImage({ lineups, names, balance, date, format }
   v.addColorStop(1, 'rgba(0,0,0,0.6)');
   ctx.fillStyle = v;
   ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = 'rgba(236,234,223,0.08)';
+  ctx.strokeStyle = 'rgba(236,234,223,0.05)';
   ctx.lineWidth = 4;
   ctx.beginPath(); ctx.arc(W / 2, H * 0.62, 260, 0, Math.PI * 2); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(0, H * 0.62); ctx.lineTo(W, H * 0.62); ctx.stroke();
@@ -112,7 +112,7 @@ export async function renderShareImage({ lineups, names, balance, date, format }
     team.forEach((p, i) => {
       const sub = i >= nStart;
       const y = 528 + i * ROW + (sub ? 60 : 0);
-      ctx.fillStyle = sub ? 'rgba(6,14,9,0.45)' : 'rgba(6,14,9,0.72)';
+      ctx.fillStyle = sub ? 'rgba(22,28,24,0.4)' : 'rgba(22,28,24,0.8)';
       ctx.fillRect(x, y, colW, ROW - 12);
       ctx.fillStyle = color;
       ctx.fillRect(t ? x + colW - 8 : x, y, 8, ROW - 12);
