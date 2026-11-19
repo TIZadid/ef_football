@@ -31,3 +31,12 @@ test('recent guests: newest first, capped, cleared ones dropped', () => {
   assert.equal(m.recent[0].id, 'g14');
   assert.ok(!m.recent.some((p) => p.id === 'old'));
 });
+
+test("this week's state syncs: newer picks and teams win", () => {
+  const m = mergeDocs(
+    { picked: ['a'], result: { teams: [['a'], ['b']] }, stamps: { picked: 1, result: 9 } },
+    { picked: ['a', 'b'], result: null, stamps: { picked: 5, result: 2 } },
+  );
+  assert.deepEqual(m.picked, ['a', 'b']);
+  assert.deepEqual(m.result.teams, [['a'], ['b']]);
+});

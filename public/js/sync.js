@@ -6,11 +6,15 @@
 //   deleted: { id: time },      squad deletions, so they don't come back
 //   recent: [guest…],           recently used guests, `t` = last used
 //   recentCleared: time,        "clear recent guests" time
-//   settings, history, together, apart, match,   whole-value fields…
+//   settings, history, together, apart, match, picked, guests, result…  whole-value fields…
 //   stamps: { field: time },    …each with its last-edit time
 // }
 
-export const FIELDS = ['settings', 'history', 'together', 'apart', 'match'];
+export const FIELDS = [
+  'settings', 'history', 'together', 'apart', 'match',
+  // This week's state: who's in, tonight's guests, the teams and how they're made.
+  'picked', 'guests', 'result', 'format', 'keepers', 'keeperMode', 'lastPicked', 'lastGame', 'newWeek',
+];
 export const RECENT_SIZE = 12;
 
 export function emptyDoc() {

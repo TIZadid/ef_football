@@ -137,14 +137,17 @@ function save() {
 }
 
 // ---------- syncing across devices ----------
-// Everything in the shared doc (see sync.js) goes to /api/state; tonight's
-// picks, guests and teams stay on this device.
+// Everything in the shared doc (see sync.js) goes to /api/state: the squad,
+// settings and this week's picks, guests and teams. View preferences and the
+// undo history stay on this device.
 const SYNC_LABEL = { local: 'This device only', syncing: 'Syncing…', synced: 'Synced', offline: 'Offline' };
 const sharedField = (f) => (f === 'settings' ? state.settings : f === 'history' ? state.history : state.session[f]);
 function setSharedField(f, v) {
   if (f === 'settings') state.settings = { ...DEFAULT_MATCH, ...v };
   else if (f === 'history') state.history = v;
   else if (f === 'match') state.session.match = { override: null, off: [], ...v };
+  else if (f === 'guests') state.session.guests = (v ?? []).map(normalise);
+  else if (f === 'result') state.session.result = v && v.starters ? v : null;
   else state.session[f] = v;
 }
 const localDoc = () => ({
@@ -222,7 +225,11 @@ async function pullState() {
     if (res.status === 503 || res.status === 404) return setSync('local');
     if (!res.ok) throw new Error(res.status);
     const remote = await res.json();
-    const changed = applyDoc(remote);
+    let changed = applyDoc(remote);
+    // The other device may not have moved on to the new week yet.
+    const before = JSON.stringify(state.session.result);
+    rollover();
+    if (JSON.stringify(state.session.result) !== before) { save(); changed = true; }
     setSync('synced');
     if (changed) refreshScreen();
     // Send up anything only this device had.
@@ -313,6 +320,46 @@ function matchInfo() {
 }
 const matchLabel = (mi = matchInfo()) => `${fmtDate(mi.date)} · ${fmtTime(mi.time)} · ${mi.venue.toUpperCase()}`;
 
+// ---------- the week's lifecycle ----------
+// Teams belong to one matchday. Once that day has passed they're archived
+// (they feed the fresh-match-ups preference) and tonight's picks start over.
+const GUEST_EXPIRY_DAYS = 30;
+function rollover() {
+  const s = state.session;
+  const key = iso(matchInfo().date);
+  if (s.result && s.result.match && s.result.match < key) {
+    state.history = [s.result.teams, ...state.history].slice(0, HISTORY_SIZE);
+    s.lastGame = {
+      match: s.result.match,
+      teams: s.result.teams.map((t) => t.map((id) => byId(id)?.name).filter(Boolean)),
+      balance: s.result.balance ?? null,
+    };
+    s.lastPicked = s.result.teams.flat();
+    s.result = null;
+    s.picked = [];
+    s.guests = [];
+    s.keepers = [];
+    s.newWeek = true;
+  }
+  // Teams but no picks (e.g. cleared by mistake): picks follow the teams.
+  if (s.result && !s.picked.length) s.picked = s.result.teams.flat();
+  // Guests who haven't played for a month drop off the list.
+  const cutoff = Date.now() - GUEST_EXPIRY_DAYS * 864e5;
+  state.recent = state.recent.filter((g) => (g.t ?? 0) >= cutoff || s.guests.some((x) => x.id === g.id));
+}
+
+// 'none' (no teams this week), 'ready', or 'stale' (who's in changed since).
+function teamsStatus() {
+  const s = state.session;
+  if (!s.result || s.result.match !== iso(matchInfo().date)) return { state: 'none', added: 0, removed: 0 };
+  const inTeams = new Set(s.result.teams.flat());
+  const picked = new Set(s.picked);
+  const added = s.picked.filter((id) => !inTeams.has(id)).length;
+  const removed = [...inTeams].filter((id) => !picked.has(id)).length;
+  return { state: added || removed ? 'stale' : 'ready', added, removed };
+}
+const changeText = ({ added, removed }) => [added && `${added} added`, removed && `${removed} removed`].filter(Boolean).join(', ');
+
 // ---------- shared bits ----------
 const bars = (p) => `<div class="bars">${RATINGS.map(([k, short]) => `
   <div class="${isEmpty(p, k) ? 'unk' : ''}"><span>${short}</span><p>${isEmpty(p, k) ? '<i></i><b>?</b><i></i>' : [1, 2, 3].map((n) => `<i class="${p[k] >= n ? 'f' : ''}"></i>`).join('')}</p></div>`).join('')}</div>`;
@@ -335,15 +382,16 @@ function stepper(active) {
   const s = state.session;
   const n = s.picked.length;
   const rulesCount = s.together.filter((r) => r.every(isPlaying)).length + s.apart.filter((r) => r.every(isPlaying)).length;
+  const status = teamsStatus().state;
   const steps = [
     ['pick', "Who's in", `${n} in`, false],
-    ['rules', 'Rules', rulesCount ? plural(rulesCount, 'rule') : 'optional', n < 2],
-    ['result', 'Teams', s.result ? 'ready' : '—', !s.result],
+    ['rules', 'Rules', rulesCount ? plural(rulesCount, 'rule') : 'optional', false],
+    ['result', 'Teams', status === 'ready' ? 'ready' : status === 'stale' ? 'out of date' : 'not made yet', !s.result],
   ];
   return `
     <nav class="stepper" aria-label="Steps">
       ${steps.map(([route, label, sub, disabled], i) => `
-        <button data-go="${route}" class="${route === active ? 'on' : ''}" ${disabled ? 'disabled' : ''}>
+        <button data-go="${route}" class="${route === active ? 'on' : ''} ${route === 'result' && status === 'stale' ? 'stale' : ''}" ${disabled ? 'disabled' : ''}>
           <b>${i + 1}</b><span>${label}<small data-step-sub="${route}">${sub}</small></span>
         </button>`).join('')}
     </nav>`;
@@ -403,7 +451,6 @@ document.addEventListener('click', (e) => {
 function home() {
   const s = state.session;
   const mi = matchInfo();
-  const ready = s.result && s.result.match === iso(mi.date);
   const words = ['Fair teams', 'Black vs White', 'Friday nights', 'No more arguments', 'Game on'];
   const el = h(`
     <section class="screen home">
@@ -431,18 +478,7 @@ function home() {
             ${mi.regular ? '<button class="chip" data-match-off>Game off this week</button>' : '<button class="chip" data-match-reset>Back to regular</button>'}
           </div>`}
       </div>
-      <div class="home-actions" style="--d:3">
-        ${ready ? `
-          <button class="btn" data-go="result">See teams <span class="arrow">→</span></button>
-          <button class="btn ghost" data-go="pick"><span>Redo</span></button>` : `
-          <button class="btn" data-go="pick" data-new-game>Make teams <span class="arrow">→</span></button>
-          <button class="btn ghost" data-go="squad"><span>Squad</span></button>`}
-      </div>
-      <div class="tags" style="--d:4">
-        <span class="tag">Squad <b>${pad(state.pool.length)}</b></span>
-        <span class="tag">In <b>${pad(s.picked.length)}</b></span>
-        <span class="tag">${s.format}-a-side</span>
-      </div>
+      ${homeStatus(mi)}
       <div class="ticker" style="--d:5" aria-hidden="true">
         <div>${[...words, ...words].map((w) => `<span>${w}</span>`).join('')}</div>
       </div>
@@ -454,8 +490,72 @@ function home() {
     if (e.target.closest('[data-match-on]')) { m.off = m.off.filter((d) => d !== iso(mi.date)); save(); toast('Game on!'); return show('home', false); }
     if (e.target.closest('[data-match-reset]')) { m.override = null; save(); return show('home', false); }
     if (e.target.closest('[data-match-edit]')) openMatchSheet(mi);
+    if (e.target.closest('[data-same-as-last]')) {
+      const s2 = state.session;
+      s2.lastPicked.forEach(ensureGuest);
+      s2.picked = s2.lastPicked.filter((id) => byId(id));
+      s2.newWeek = false;
+      save();
+      return go('pick');
+    }
+    if (e.target.closest('[data-home-share]')) { go('result'); setTimeout(openShareSheet, 450); }
   });
   return el;
+}
+
+// What this week looks like, and the one obvious next step.
+function homeStatus(mi) {
+  const s = state.session;
+  const status = teamsStatus();
+  const when = fmtDate(mi.off ? mi.next : mi.date);
+  const last = s.lastGame ? `
+    <p class="last-game mono muted">Last game ${fmtDate(parseIso(s.lastGame.match))}${s.lastGame.balance ? ` · ${s.lastGame.balance}% balanced` : ''}</p>` : '';
+  if (status.state !== 'none') {
+    const r = currentResult();
+    const names = (t) => r.teams[t].map((p) => esc(p.name)).join(', ');
+    return `
+      <section class="status-card" style="--d:3">
+        <div class="status-head">
+          <span class="status-pill ${status.state} ${isLocked() ? 'locked' : ''}">${isLocked() ? '🔒 Teams locked in' : status.state === 'ready' ? '✓ Teams are set' : '⚠ Teams out of date'}</span>
+          <span class="mono muted">${r.balance}% balanced</span>
+        </div>
+        ${status.state === 'stale' ? `<p class="status-note">Who's in changed since the split (${changeText(status)}). Split again to update the teams.</p>` : ''}
+        <div class="mini-teams">
+          <p><b class="bib a">Black</b> ${names(0)}</p>
+          <p><b class="bib b">White</b> ${names(1)}</p>
+        </div>
+        <div class="home-actions">
+          ${isLocked() || status.state === 'ready'
+            ? `<button class="btn" data-go="result">${isLocked() ? 'Open teams' : 'See teams'} <span class="arrow">→</span></button><button class="btn ghost" data-home-share><span>Send</span></button>`
+            : '<button class="btn" data-go="pick">Review & split <span class="arrow">→</span></button><button class="btn ghost" data-go="result"><span>Old teams</span></button>'}
+        </div>
+        <p class="hint">${isLocked()
+          ? 'Locked for the week. To change them, open the teams and tap <b>Unlock</b>.'
+          : 'Happy with them? Open the teams and tap <b>Lock in</b>. Want different players? Change <b>Who\'s in</b> and split again.'}</p>
+      </section>${last}`;
+  }
+  if (s.picked.length) {
+    return `
+      <section class="status-card" style="--d:3">
+        <div class="status-head"><span class="status-pill">${s.picked.length} in so far</span><span class="mono muted">${when}</span></div>
+        <p class="status-note">You've started picking for ${when}. Finish picking, then hit Split.</p>
+        <div class="home-actions"><button class="btn" data-go="pick">Continue <span class="arrow">→</span></button><button class="btn ghost" data-go="squad"><span>Squad</span></button></div>
+      </section>${last}`;
+  }
+  const canRepeat = s.lastPicked.some((id) => byId(id) || state.recent.some((g) => g.id === id));
+  return `
+    <section class="status-card" style="--d:3">
+      <div class="status-head"><span class="status-pill">${s.newWeek ? 'New week' : 'Make teams'}</span><span class="mono muted">${when}</span></div>
+      <ol class="how">
+        <li><b>1</b> Tap who's in</li>
+        <li><b>2</b> Add rules <small>(optional)</small></li>
+        <li><b>3</b> Split & send to the group</li>
+      </ol>
+      <div class="home-actions">
+        <button class="btn" data-go="pick" data-new-game>Pick players <span class="arrow">→</span></button>
+        ${canRepeat ? '<button class="btn ghost" data-same-as-last><span>Same as last</span></button>' : '<button class="btn ghost" data-go="squad"><span>Squad</span></button>'}
+      </div>
+    </section>${last}`;
 }
 
 function openMatchSheet(mi) {
@@ -639,6 +739,7 @@ function pick() {
         <h1 class="display title">Who's in?</h1>
         <span class="mono muted">${matchLabel()}</span>
       </div>
+      <div class="banner-slot" data-banner style="--d:1">${pickBanner()}</div>
       <div style="--d:2">
         <div class="format">
           <span class="mono muted">Players a side</span>
@@ -651,7 +752,7 @@ function pick() {
           ${canRepeat ? '<button class="chip" data-repeat>↺ Same as last game</button>' : ''}
           <button class="chip" data-all>All in</button>
           <button class="chip" data-none>Clear</button>
-          ${guests.length ? `<button class="chip guests-toggle ${s.showRecent ? 'on' : ''}" data-toggle-guests>${s.showRecent ? 'Hide guests' : `Show guests (${guests.length})`}</button>` : ''}
+          ${guests.length ? `<button class="switch ${s.showRecent ? 'on' : ''}" data-toggle-guests role="switch" aria-checked="${s.showRecent}"><i></i>Past guests (${guests.length})</button>` : ''}
         </div>
       </div>
       <div class="grid" style="--d:3">
@@ -661,7 +762,7 @@ function pick() {
       ${state.pool.length ? '' : `<div class="empty" style="--d:4;margin-top:14px"><p class="muted">No squad yet. Add guests, or set up your regulars.</p><button class="btn small paper" data-go="squad">Set up squad</button></div>`}
       <div class="dock"><div class="dock-inner">
         <div class="tally"><span class="count" data-count>${pad(s.picked.length)}</span><span class="mono muted" data-split-info></span></div>
-        <button class="btn ghost small" data-go="rules" data-rules-btn><span>Rules</span></button>
+        <button class="btn ghost small" data-go="rules"><span>Rules</span></button>
         <button class="btn" data-split>Split ⚡</button>
       </div></div>
     </section>`);
@@ -669,7 +770,6 @@ function pick() {
   const count = el.querySelector('[data-count]');
   const info = el.querySelector('[data-split-info]');
   const splitBtn = el.querySelector('[data-split]');
-  const rulesBtn = el.querySelector('[data-rules-btn]');
   const sync = (animate = true) => {
     const n = s.picked.length;
     const subs = Math.max(0, n - 2 * s.format);
@@ -677,10 +777,14 @@ function pick() {
     if (animate) bump(count);
     info.textContent = n < 2 ? 'pick 2+' : subs ? `${s.format}v${s.format} +${subs} sub${subs > 1 ? 's' : ''}` : `${Math.floor(n / 2)}v${Math.ceil(n / 2)}`;
     splitBtn.disabled = n < 2;
-    rulesBtn.disabled = n < 2;
     const sub = el.querySelector('[data-step-sub="pick"]');
     if (sub) sub.textContent = `${n} in`;
-    el.querySelector('.stepper [data-go="rules"]').disabled = n < 2;
+    const status = teamsStatus().state;
+    const teamsSub = el.querySelector('[data-step-sub="result"]');
+    if (teamsSub) teamsSub.textContent = status === 'ready' ? 'ready' : status === 'stale' ? 'out of date' : 'not made yet';
+    el.querySelector('.stepper [data-go="result"]')?.classList.toggle('stale', status === 'stale');
+    el.querySelector('[data-banner]').innerHTML = pickBanner();
+    splitBtn.innerHTML = isLocked() ? 'Open teams →' : status === 'none' ? 'Split ⚡' : 'Split again ⚡';
     save();
   };
   const setPicked = (ids) => {
@@ -715,6 +819,7 @@ function pick() {
       return;
     }
     const t = e.target.closest('.ticket');
+    if (t && isLocked()) return toast('Teams are locked. Unlock them to change who\'s in');
     if (t) {
       const id = t.dataset.id;
       ensureGuest(id);
@@ -722,6 +827,7 @@ function pick() {
       if (!isPlaying(id)) confettiFrom(t, 8, 0.45);
       return setPicked(isPlaying(id) ? s.picked.filter((x) => x !== id) : [...s.picked, id]);
     }
+    if (isLocked() && e.target.closest('[data-all], [data-none], [data-repeat], [data-guest]')) return toast('Teams are locked. Unlock them to change who\'s in');
     if (e.target.closest('[data-repeat]')) {
       e.target.closest('[data-repeat]').remove();
       s.lastPicked.forEach(ensureGuest);
@@ -741,7 +847,24 @@ function pick() {
   return el;
 }
 
+function pickBanner() {
+  const status = teamsStatus();
+  if (isLocked()) {
+    return `<div class="banner ok"><span>🔒 This week's teams are locked in. Unlock them on the Teams screen to change who's in.</span><button class="chip" data-go="result">Open teams</button></div>`;
+  }
+  if (status.state === 'ready') {
+    return `<div class="banner ok"><span>✓ Teams for this week are set. Change the picks and split again to remake them.</span><button class="chip" data-go="result">View teams</button></div>`;
+  }
+  if (status.state === 'stale') {
+    return `<div class="banner warn"><span>⚠ Players changed since the teams were made (${changeText(status)}). Split again to update.</span><button class="chip" data-go="result">Old teams</button></div>`;
+  }
+  return '';
+}
+
+const isLocked = () => !!state.session.result?.locked && teamsStatus().state !== 'none';
+
 function startSplit() {
+  if (isLocked()) return go('result');
   if (runSplit()) { state.reveal = true; go('result'); }
 }
 
@@ -920,8 +1043,13 @@ function runSplit(exclude = null) {
       options: r.options,
       edited: false,
       match: key,
+      balance: r.balance,
     };
     s.lastPicked = s.picked.slice();
+    s.newWeek = false;
+    undoStack.length = 0;
+    // Guests who play stay on the list for another month.
+    s.guests.filter((g) => isPlaying(g.id)).forEach(rememberGuest);
     save();
     return true;
   } catch (err) {
@@ -929,6 +1057,14 @@ function runSplit(exclude = null) {
     console.error(err);
     return false;
   }
+}
+
+// Hand edits to the teams can be undone, back to the last split.
+const undoStack = [];
+const snapshotResult = () => JSON.parse(JSON.stringify(state.session.result));
+function pushUndo() {
+  undoStack.push(snapshotResult());
+  if (undoStack.length > 30) undoStack.shift();
 }
 
 function currentResult() {
@@ -954,15 +1090,23 @@ function result() {
       ${appbar('result')}
       ${stepper('result')}
       <div data-body style="--d:1"></div>
-      <div class="dock"><div class="dock-inner">
-        <button class="btn orange small regen" data-shuffle aria-label="Regenerate teams"><span class="spin">↻</span> Regenerate</button>
-        <button class="btn" data-share>Send <span class="arrow">↗</span></button>
-      </div></div>
+      <div class="dock"><div class="dock-inner" data-dock></div></div>
     </section>`);
+  const dock = el.querySelector('[data-dock]');
+  const paintDock = () => {
+    dock.innerHTML = isLocked() ? `
+      <button class="btn ghost small" data-unlock-teams><span>🔓 Unlock</span></button>
+      <button class="btn" data-share>Send <span class="arrow">↗</span></button>` : `
+      <button class="btn orange small regen" data-shuffle aria-label="Regenerate teams"><span class="spin">↻</span></button>
+      <button class="btn paper small" data-lock-teams>🔒 Lock in</button>
+      <button class="btn" data-share>Send <span class="arrow">↗</span></button>`;
+  };
   const body = el.querySelector('[data-body]');
 
   const paint = () => {
     const r = currentResult();
+    s.result.balance = r.balance;
+    const status = teamsStatus();
     const [a, b] = r.stats;
     const units = [
       ['Attack', a.atk, b.atk],
@@ -970,6 +1114,7 @@ function result() {
       ['Engine', a.eng, b.eng],
     ];
     body.innerHTML = `
+      ${status.state === 'stale' ? `<div class="banner warn"><span>⚠ Who's in changed since these teams were made (${changeText(status)}).</span><button class="chip" data-resplit>Split again</button></div>` : ''}
       <div class="odds">
         <div class="odds-head">
           <span class="mono muted">${matchLabel()} · ${s.format}-a-side</span>
@@ -986,11 +1131,14 @@ function result() {
           <button data-view="pitch" class="${s.view === 'pitch' ? 'on' : ''}">Pitch</button>
           <button data-view="list" class="${s.view === 'list' ? 'on' : ''}">List</button>
         </div>
-        <button class="chip" data-swap-colours title="Swap which team is Black and which is White">⇄ Swap colours</button>
+        ${isLocked() ? '<span class="locked-tag">🔒 Locked in</span>' : '<button class="chip" data-swap-colours title="Swap which team is Black and which is White">⇄ Swap colours</button>'}
+        ${undoStack.length && !isLocked() ? `<button class="chip undo" data-undo title="Undo the last change">↶ Undo${undoStack.length > 1 ? ` (${undoStack.length})` : ''}</button>` : ''}
       </div>
       ${s.view === 'pitch' ? pitchView(r) : `<div class="versus"><span class="vs">VS</span>${r.lineups.map((u, t) => teamPanel(u, t)).join('')}</div>`}
       ${r.warnings.map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join('')}
-      <p class="edit-hint"><span>✎</span> Tap any player to swap, move, bench or put them in goal.</p>
+      ${isLocked()
+        ? '<p class="edit-hint"><span>🔒</span> These are this week\'s teams. Unlock to make changes.</p>'
+        : '<p class="edit-hint"><span>✎</span> Tap any player to swap, move, bench or put them in goal. Happy with them? Lock them in.</p>'}
       <section class="card units">
         <div class="units-head"><span class="a">Black</span><h3>Head to head</h3><span class="b">White</span></div>
         ${units.map(([k, va, vb]) => {
@@ -1007,7 +1155,18 @@ function result() {
   };
 
   el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-undo]')) {
+      if (!undoStack.length) return;
+      const before = snapshot(body);
+      s.result = undoStack.pop();
+      save();
+      paint();
+      flip(body, before, []);
+      buzz(8);
+      return toast('Undone');
+    }
     if (e.target.closest('[data-swap-colours]')) {
+      pushUndo();
       const res = s.result;
       res.teams.reverse(); res.starters.reverse(); res.goal.reverse();
       save();
@@ -1017,10 +1176,34 @@ function result() {
       buzz(10);
       return toast('Colours swapped');
     }
+    if (e.target.closest('[data-resplit]')) {
+      if (runSplit()) { paint(); revealTeams(); celebrate(); }
+      return;
+    }
     const v = e.target.closest('[data-view]');
     if (v) { s.view = v.dataset.view; save(); paint(); revealTeams(); return; }
+    if (e.target.closest('[data-lock-teams]')) {
+      s.result.locked = true;
+      undoStack.length = 0;
+      save();
+      paint();
+      paintDock();
+      confettiFrom(dock, 26, 0.9);
+      buzz([10, 40, 10]);
+      return toast('Teams locked in for the week');
+    }
+    if (e.target.closest('[data-unlock-teams]')) {
+      s.result.locked = false;
+      save();
+      paint();
+      paintDock();
+      return toast('Unlocked. You can edit again');
+    }
     const pl = e.target.closest('.pl');
-    if (pl) return openEditSheet(pl.dataset.id, body, paint);
+    if (pl) {
+      if (isLocked()) return toast('Teams are locked. Tap Unlock to edit');
+      return openEditSheet(pl.dataset.id, body, paint);
+    }
     const regen = e.target.closest('[data-shuffle]');
     if (regen) {
       if (runSplit(s.result.signature)) {
@@ -1036,6 +1219,7 @@ function result() {
   });
 
   paint();
+  paintDock();
   return el;
 }
 
@@ -1139,6 +1323,7 @@ function openEditSheet(id, body, paint) {
 
   const apply = (fn, msg) => {
     const before = snapshot(body);
+    pushUndo();
     fn();
     r.signature = null;
     r.edited = true;
@@ -1428,6 +1613,8 @@ async function openShareSheet() {
 // ---------- boot ----------
 removeDemoPlayers();
 prune();
+rollover();
+save();
 takeSnap();
 show(routeFromHash(), false);
 pullState();
