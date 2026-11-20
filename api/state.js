@@ -20,6 +20,8 @@ async function redis(command) {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
+  // Devices stamp their edits with this clock so they agree on what came last.
+  res.setHeader('X-Server-Time', String(Date.now()));
   if (!URL || !TOKEN) return res.status(503).json({ error: 'Storage is not connected yet.' });
   try {
     const stored = await redis(['GET', KEY]);

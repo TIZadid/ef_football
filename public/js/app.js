@@ -155,6 +155,15 @@ const localDoc = () => ({
   ...Object.fromEntries(FIELDS.map((f) => [f, sharedField(f)])),
 });
 
+// Edit times use the server's clock, so devices whose clocks disagree still
+// agree on which change came last.
+let clockOffset = 0;
+const now = () => Date.now() + clockOffset;
+function readClock(res) {
+  const t = Number(res.headers.get('X-Server-Time'));
+  if (t) clockOffset = t - Date.now();
+}
+
 // Compare against the last snapshot to stamp what changed with an edit time.
 let snap = null;
 const strip = ({ t, ...rest }) => JSON.stringify(rest);
@@ -166,14 +175,14 @@ function takeSnap() {
 }
 function stampChanges() {
   if (!snap) return takeSnap();
-  const now = Date.now();
+  const t = now();
   const ids = new Set();
   for (const p of state.pool) {
     ids.add(p.id);
-    if (snap.pool.get(p.id) !== strip(p)) p.t = now;
+    if (snap.pool.get(p.id) !== strip(p)) p.t = t;
   }
-  for (const id of snap.pool.keys()) if (!ids.has(id)) state.deleted[id] = now;
-  for (const f of FIELDS) if (snap.fields[f] !== JSON.stringify(sharedField(f))) state.stamps[f] = now;
+  for (const id of snap.pool.keys()) if (!ids.has(id)) state.deleted[id] = t;
+  for (const f of FIELDS) if (snap.fields[f] !== JSON.stringify(sharedField(f))) state.stamps[f] = t;
   takeSnap();
 }
 
@@ -204,13 +213,25 @@ function scheduleSync() {
   syncTimer = setTimeout(pushState, 700);
 }
 
-const refreshScreen = () => { if (!activeSheet && state.screen) show(state.screen, false); };
+// Re-render after synced changes; the address wins, so a link to the teams
+// opens them once they've arrived from another device.
+const refreshScreen = () => { if (!activeSheet && state.screen) show(routeFromHash(), false); };
+
+// Send now instead of waiting for the debounce (e.g. locking the teams, or
+// the app going to the background).
+function pushNow() {
+  if (state.sync === 'local') return;
+  clearTimeout(syncTimer);
+  pushState();
+}
 
 async function pushState() {
   setSync('syncing');
   try {
-    const res = await fetch('/api/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(localDoc()) });
+    // keepalive lets the request finish even if the page is being hidden.
+    const res = await fetch('/api/state', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(localDoc()) });
     if (!res.ok) throw new Error(res.status);
+    readClock(res);
     if (applyDoc(await res.json())) refreshScreen();
     setSync('synced');
   } catch {
@@ -224,6 +245,7 @@ async function pullState() {
     // No storage connected (or running locally): keep everything on this device.
     if (res.status === 503 || res.status === 404) return setSync('local');
     if (!res.ok) throw new Error(res.status);
+    readClock(res);
     const remote = await res.json();
     let changed = applyDoc(remote);
     // The other device may not have moved on to the new week yet.
@@ -239,13 +261,22 @@ async function pullState() {
     setSync('offline');
   }
 }
-window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.sync !== 'local') pullState(); });
+window.addEventListener('visibilitychange', () => {
+  if (state.sync === 'local') return;
+  if (document.visibilityState === 'visible') pullState();
+  else pushNow();
+});
+window.addEventListener('pagehide', pushNow);
+// While the app is open, check for changes from other devices.
+setInterval(() => {
+  if (document.visibilityState === 'visible' && state.sync !== 'local' && !activeSheet) pullState();
+}, 15000);
 window.addEventListener('online', () => { if (state.sync === 'offline') pullState(); });
 
 // Remember a guest in the recent list, newest first.
 function rememberGuest(g) {
   const { t, ...rest } = g;
-  state.recent = [{ ...rest, guest: true, t: Date.now() }, ...state.recent.filter((x) => x.id !== g.id)].slice(0, RECENT_SIZE);
+  state.recent = [{ ...rest, guest: true, t: now() }, ...state.recent.filter((x) => x.id !== g.id)].slice(0, RECENT_SIZE);
 }
 
 // Drop references to players who no longer exist.
@@ -1256,6 +1287,7 @@ function result() {
       s.result.locked = true;
       undoStack.length = 0;
       save();
+      pushNow();
       paint();
       paintDock();
       confettiFrom(dock, 26, 0.9);
@@ -1265,6 +1297,7 @@ function result() {
     if (e.target.closest('[data-unlock-teams]')) {
       s.result.locked = false;
       save();
+      pushNow();
       paint();
       paintDock();
       return toast('Unlocked. You can edit again');
