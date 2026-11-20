@@ -140,7 +140,9 @@ function save() {
 // Everything in the shared doc (see sync.js) goes to /api/state: the squad,
 // settings and this week's picks, guests and teams. View preferences and the
 // undo history stay on this device.
-const SYNC_LABEL = { local: 'This device only', syncing: 'Syncing…', synced: 'Synced', offline: 'Offline' };
+const SYNC_LABEL = { local: 'Not syncing', syncing: 'Saving…', synced: 'Saved', offline: 'Offline' };
+let syncReason = 'Checking…';
+let lastSaved = 0;
 const sharedField = (f) => (f === 'settings' ? state.settings : f === 'history' ? state.history : state.session[f]);
 function setSharedField(f, v) {
   if (f === 'settings') state.settings = { ...DEFAULT_MATCH, ...v };
@@ -201,8 +203,10 @@ function applyDoc(doc) {
   return JSON.stringify(localDoc()) !== before;
 }
 
-function setSync(value) {
+function setSync(value, reason) {
   state.sync = value;
+  if (reason) syncReason = reason;
+  if (value === 'synced') lastSaved = Date.now();
   document.querySelectorAll('[data-sync]').forEach((el) => { el.dataset.state = value; el.title = SYNC_LABEL[value]; el.querySelector('span').textContent = SYNC_LABEL[value]; });
 }
 
@@ -210,7 +214,7 @@ let syncTimer;
 function scheduleSync() {
   if (state.sync === 'local') return;
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(pushState, 700);
+  syncTimer = setTimeout(pushState, 400);
 }
 
 // Re-render after synced changes; the address wins, so a link to the teams
@@ -233,9 +237,9 @@ async function pushState() {
     if (!res.ok) throw new Error(res.status);
     readClock(res);
     if (applyDoc(await res.json())) refreshScreen();
-    setSync('synced');
+    setSync('synced', 'Every change is saved online and shows up on your other devices within about 15 seconds.');
   } catch {
-    setSync('offline');
+    setSync('offline', 'Couldn\'t reach the server. Changes are kept on this device and sent when you\'re back online.');
   }
 }
 
@@ -243,7 +247,8 @@ async function pullState() {
   try {
     const res = await fetch('/api/state', { cache: 'no-store' });
     // No storage connected (or running locally): keep everything on this device.
-    if (res.status === 503 || res.status === 404) return setSync('local');
+    if (res.status === 503) return setSync('local', 'The site is running, but its storage isn\'t connected. In Vercel: Storage → connect Upstash Redis to this project, then redeploy.');
+    if (res.status === 404) return setSync('local', 'This copy of the site has no storage server (for example when running it on your computer). Changes stay on this device.');
     if (!res.ok) throw new Error(res.status);
     readClock(res);
     const remote = await res.json();
@@ -253,12 +258,12 @@ async function pullState() {
     rollover();
     syncTeamsWithPicks();
     if (JSON.stringify(state.session.result) !== before) { save(); changed = true; }
-    setSync('synced');
+    setSync('synced', 'Every change is saved online and shows up on your other devices within about 15 seconds.');
     if (changed) refreshScreen();
     // Send up anything only this device had.
     if (JSON.stringify(localDoc()) !== JSON.stringify(mergeDocs(remote, {}))) pushState();
   } catch {
-    setSync('offline');
+    setSync('offline', 'Couldn\'t reach the server. Changes are kept on this device and sent when you\'re back online.');
   }
 }
 window.addEventListener('visibilitychange', () => {
@@ -401,7 +406,7 @@ function appbar(active) {
   return `
     <header class="appbar">
       <button class="brand" data-go="home" aria-label="Home">Game<span>On</span><i>.</i></button>
-      <span class="sync" data-sync data-state="${state.sync}" title="${SYNC_LABEL[state.sync]}"><i></i><span>${SYNC_LABEL[state.sync]}</span></span>
+      <button class="sync" data-sync data-state="${state.sync}" title="${SYNC_LABEL[state.sync]}" aria-label="Sync status"><i></i><span>${SYNC_LABEL[state.sync]}</span></button>
       <nav>
         <button class="${active === 'home' ? 'on' : ''}" data-go="home">Home</button>
         <button class="${active === 'squad' ? 'on' : ''}" data-go="squad">Squad</button>
@@ -472,12 +477,30 @@ function show(name, animate = true) {
 
 window.addEventListener('hashchange', () => { closeSheet(); show(routeFromHash()); });
 document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-sync]')) return openSyncSheet();
   const target = e.target.closest('[data-go]');
   if (!target || target.disabled) return;
   // Every new game starts as 5-a-side.
   if (target.hasAttribute('data-new-game')) { state.session.format = DEFAULT_FORMAT; save(); }
   go(target.dataset.go);
 });
+
+function openSyncSheet() {
+  const ago = lastSaved ? Math.max(1, Math.round((Date.now() - lastSaved) / 1000)) : 0;
+  const sheet = openSheet(`
+    <span class="mono">Saving & syncing</span>
+    <h2 class="display">${state.sync === 'synced' ? 'All saved' : state.sync === 'syncing' ? 'Saving…' : state.sync === 'offline' ? 'Offline' : 'Not syncing'}</h2>
+    <p class="sheet-note">${esc(syncReason)}</p>
+    ${ago ? `<p class="sheet-note">Last saved ${ago < 60 ? `${ago}s` : `${Math.round(ago / 60)} min`} ago.</p>` : ''}
+    <p class="sheet-note">Synced: the squad, past guests, who's in, tonight's guests, rules, the teams and the matchday.</p>
+    <div class="actions"><button class="btn" data-retry>Sync now</button></div>`);
+  sheet.querySelector('[data-retry]').addEventListener('click', async () => {
+    closeSheet();
+    await pullState();
+    if (state.sync !== 'local') await pushState();
+    toast(state.sync === 'synced' ? 'Synced' : SYNC_LABEL[state.sync]);
+  });
+}
 
 // ---------- home ----------
 function home() {
@@ -535,59 +558,61 @@ function home() {
   return el;
 }
 
-// What this week looks like, and the one obvious next step.
+// The home menu: current teams first, then setup and the player pool.
 function homeStatus(mi) {
   const s = state.session;
   const status = teamsStatus();
   const when = fmtDate(mi.off ? mi.next : mi.date);
-  const last = s.lastGame ? `
-    <p class="last-game mono muted">Last game ${fmtDate(parseIso(s.lastGame.match))}${s.lastGame.balance ? ` · ${s.lastGame.balance}% balanced` : ''}</p>` : '';
+  const rulesCount = s.together.length + s.apart.length;
+  const canRepeat = !s.picked.length && s.lastPicked.some((id) => byId(id) || state.recent.some((g) => g.id === id));
+  let teamsTile;
   if (status.state !== 'none') {
     const r = currentResult();
     const names = (t) => r.teams[t].map((p) => esc(p.name)).join(', ');
-    return `
-      <section class="status-card" style="--d:3">
-        <div class="status-head">
-          <span class="status-pill ${status.state} ${isLocked() ? 'locked' : ''}">${isLocked() ? '🔒 Teams locked in' : status.state === 'ready' ? '✓ Teams are set' : '⚠ Teams out of date'}</span>
-          <span class="mono muted">${r.balance}% balanced</span>
-        </div>
-        ${status.state === 'stale' ? `<p class="status-note">Who's in changed since the split (${changeText(status)}). Split again to update the teams.</p>` : ''}
-        <div class="mini-teams">
-          <p><b class="bib a">Black</b> ${names(0)}</p>
-          <p><b class="bib b">White</b> ${names(1)}</p>
-        </div>
-        <div class="home-actions">
-          ${isLocked() || status.state === 'ready'
-            ? `<button class="btn" data-go="result">${isLocked() ? 'Open teams' : 'See teams'} <span class="arrow">→</span></button><button class="btn ghost" data-home-share><span>Send</span></button>`
-            : '<button class="btn" data-go="pick">Review & split <span class="arrow">→</span></button><button class="btn ghost" data-go="result"><span>Old teams</span></button>'}
-        </div>
-        <p class="hint">${isLocked()
-          ? 'Locked for the week. To change them, open the teams and tap <b>Unlock</b>.'
-          : 'Happy with them? Open the teams and tap <b>Lock in</b>. Want different players? Change <b>Who\'s in</b> and split again.'}</p>
-      </section>${last}`;
+    const pill = isLocked() ? '🔒 Locked in' : status.state === 'ready' ? '✓ Set' : '⚠ Out of date';
+    teamsTile = `
+      <button class="tile teams-tile" data-go="result">
+        <span class="tile-top"><span class="tile-label">Current teams</span><span class="status-pill ${isLocked() ? 'locked' : status.state}">${pill}</span></span>
+        <span class="tile-big">${r.balance}<small>% balanced</small></span>
+        <span class="mini-teams">
+          <span><b class="bib a">Black</b> ${names(0)}</span>
+          <span><b class="bib b">White</b> ${names(1)}</span>
+        </span>
+        <span class="tile-go">Open teams →</span>
+      </button>
+      <button class="btn ghost small tile-share" data-home-share><span>Send to the group ↗</span></button>`;
+  } else {
+    teamsTile = `
+      <div class="tile teams-tile empty-tile">
+        <span class="tile-top"><span class="tile-label">Current teams</span><span class="status-pill">${s.newWeek ? 'New week' : 'Not made yet'}</span></span>
+        <span class="tile-big small">No teams for ${when} yet</span>
+        <ol class="how">
+          <li><b>1</b> Tap who's in</li>
+          <li><b>2</b> Add rules <small>(optional)</small></li>
+          <li><b>3</b> Split, lock in & send</li>
+        </ol>
+        <span class="tile-actions">
+          <button class="btn" data-go="pick" ${s.picked.length ? '' : 'data-new-game'}>${s.picked.length ? `Continue (${s.picked.length} in)` : 'Make teams'} <span class="arrow">→</span></button>
+          ${canRepeat ? '<button class="btn ghost small" data-same-as-last><span>Same as last</span></button>' : ''}
+        </span>
+      </div>`;
   }
-  if (s.picked.length) {
-    return `
-      <section class="status-card" style="--d:3">
-        <div class="status-head"><span class="status-pill">${s.picked.length} in so far</span><span class="mono muted">${when}</span></div>
-        <p class="status-note">You've started picking for ${when}. Finish picking, then hit Split.</p>
-        <div class="home-actions"><button class="btn" data-go="pick">Continue <span class="arrow">→</span></button><button class="btn ghost" data-go="squad"><span>Squad</span></button></div>
-      </section>${last}`;
-  }
-  const canRepeat = s.lastPicked.some((id) => byId(id) || state.recent.some((g) => g.id === id));
+  const guestsCount = allGuests().length;
   return `
-    <section class="status-card" style="--d:3">
-      <div class="status-head"><span class="status-pill">${s.newWeek ? 'New week' : 'Make teams'}</span><span class="mono muted">${when}</span></div>
-      <ol class="how">
-        <li><b>1</b> Tap who's in</li>
-        <li><b>2</b> Add rules <small>(optional)</small></li>
-        <li><b>3</b> Split & send to the group</li>
-      </ol>
-      <div class="home-actions">
-        <button class="btn" data-go="pick" data-new-game>Pick players <span class="arrow">→</span></button>
-        ${canRepeat ? '<button class="btn ghost" data-same-as-last><span>Same as last</span></button>' : '<button class="btn ghost" data-go="squad"><span>Squad</span></button>'}
-      </div>
-    </section>${last}`;
+    <section class="tiles" style="--d:3">
+      ${teamsTile}
+      <button class="tile small-tile" data-go="pick">
+        <span class="tile-label">Who's in & setup</span>
+        <span class="tile-big">${s.picked.length}<small> in</small></span>
+        <span class="tile-sub">${s.format}-a-side · ${rulesCount ? plural(rulesCount, 'rule') : 'no rules'}${isLocked() ? ' · locked' : ''}</span>
+      </button>
+      <button class="tile small-tile" data-go="squad">
+        <span class="tile-label">Player pool</span>
+        <span class="tile-big">${state.pool.length}<small> regulars</small></span>
+        <span class="tile-sub">${guestsCount ? plural(guestsCount, 'past guest') : 'no past guests'}</span>
+      </button>
+    </section>
+    ${s.lastGame ? `<p class="last-game mono muted">Last game ${fmtDate(parseIso(s.lastGame.match))}${s.lastGame.balance ? ` · ${s.lastGame.balance}% balanced` : ''}</p>` : ''}`;
 }
 
 function openMatchSheet(mi) {
@@ -919,6 +944,7 @@ function syncTeamsWithPicks() {
     return score;
   };
   const added = [];
+  const swaps = [];
   for (const id of s.picked.filter((x) => !r.teams.flat().includes(x))) {
     let best = null;
     for (const t of [0, 1]) {
@@ -942,6 +968,22 @@ function syncTeamsWithPicks() {
     r.teams = best.trial;
     added.push([best.id, 1 - big]);
   }
+  // Then up to two swaps, only when they clearly even things out, so the
+  // teams stay recognisable.
+  for (let round = 0; round < 2; round++) {
+    const current = balanceOf(r.teams);
+    let best = null;
+    for (const x of r.teams[0]) {
+      for (const y of r.teams[1]) {
+        const trial = [r.teams[0].map((id) => (id === x ? y : id)), r.teams[1].map((id) => (id === y ? x : id))];
+        const score = balanceOf(trial);
+        if (score >= current + 3 && (!best || score > best.score)) best = { score, trial, x, y };
+      }
+    }
+    if (!best) break;
+    r.teams = best.trial;
+    swaps.push([best.x, best.y]);
+  }
   // The shown line-up is rebuilt for the new squads.
   const all = new Map(resolveAll(r.teams.flat().map(byId)).map((p) => [p.id, p]));
   const ups = r.teams.map((t) => lineup(t.map((id) => all.get(id)), balanceOpts()));
@@ -950,7 +992,7 @@ function syncTeamsWithPicks() {
   r.signature = null;
   r.edited = true;
   save();
-  return { added, removed };
+  return { added, removed, swaps };
 }
 
 function announceTeamChanges(change) {
@@ -959,6 +1001,7 @@ function announceTeamChanges(change) {
   const parts = [
     ...change.added.map(([id, t]) => `+${name(id)} → ${TEAM_NAMES[t]}`),
     ...change.removed.map((id) => `−${name(id)}`),
+    ...(change.swaps ?? []).map(([x, y]) => `${name(x)} ⇄ ${name(y)}`),
   ];
   toast(`Teams updated: ${parts.slice(0, 3).join(', ')}${parts.length > 3 ? '…' : ''}`);
 }
