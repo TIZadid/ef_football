@@ -28,7 +28,20 @@ const store = {
 };
 const roomHeaders = () => (ROOM ? { 'X-Room': ROOM.code, 'X-Pin': ROOM.pin } : {});
 
-function leaveRoom(message) {
+// Rooms used on this device, newest first, for quick switching.
+const myRooms = () => raw.get('gameon.rooms') ?? (ROOM ? [ROOM] : []);
+function rememberRoom(room) {
+  raw.set('gameon.rooms', [room, ...myRooms().filter((r) => r.code !== room.code)].slice(0, 8));
+}
+function enterRoom(code, pin, name) {
+  rememberRoom({ code, pin, name });
+  raw.set('gameon.room', { code, pin, name });
+  location.hash = 'home';
+  location.reload();
+}
+
+function leaveRoom(message, forget = false) {
+  if (forget && ROOM) raw.set('gameon.rooms', myRooms().filter((r) => r.code !== ROOM.code));
   raw.set('gameon.room', null);
   if (message) raw.set('gameon.gateMessage', message);
   location.hash = '';
@@ -436,18 +449,50 @@ const changeText = ({ added, removed }) => [added && `${added} added`, removed &
 const bars = (p) => `<div class="bars">${RATINGS.map(([k, short]) => `
   <div class="${isEmpty(p, k) ? 'unk' : ''}"><span>${short}</span><p>${isEmpty(p, k) ? '<i></i><b>?</b><i></i>' : [1, 2, 3, 4, 5].map((n) => `<i class="${p[k] >= n ? 'f' : ''}"></i>`).join('')}</p></div>`).join('')}</div>`;
 
-function appbar(active) {
-  const flow = ['pick', 'rules', 'result'].includes(active);
+// Top bar: brand, which room you're in, and the save status. Navigation
+// lives in the bottom bar.
+function appbar() {
   return `
     <header class="appbar">
       <button class="brand" data-go="home" aria-label="Home">Game<span>On</span><i>.</i></button>
+      <button class="appbar-room" data-go="room" aria-label="Room settings"><span>${esc(ROOM?.name || 'Room')}</span><b>#${esc(ROOM?.code || '')}</b></button>
       <button class="sync" data-sync data-state="${state.sync}" title="${SYNC_LABEL[state.sync]}" aria-label="Sync status"><i></i><span>${SYNC_LABEL[state.sync]}</span></button>
-      <nav>
-        <button class="${active === 'home' ? 'on' : ''}" data-go="home">Home</button>
-        <button class="${active === 'squad' ? 'on' : ''}" data-go="squad">Squad</button>
-        <button class="${flow ? 'on' : ''}" data-go="${state.session.result && !flow ? 'result' : 'pick'}">Match</button>
-      </nav>
     </header>`;
+}
+
+// ---------- bottom bar ----------
+// Thumb-reach navigation. Teams sits in the middle: it's what most people
+// open the app for.
+const tabbar = document.createElement('nav');
+tabbar.className = 'tabbar';
+tabbar.setAttribute('aria-label', 'Main');
+tabbar.hidden = true;
+document.body.append(tabbar);
+const TAB_ICON = {
+  home: '<svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>',
+  squad: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><circle cx="17" cy="9" r="2.6"/><path d="M16 14.6c2.8.1 4.8 1.7 5.4 4.9"/></svg>',
+  pick: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 9l2 2 4-4M8 15h8"/></svg>',
+  room: '<svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.4"/></svg>',
+};
+function paintTabbar(active) {
+  if (!ROOM) { tabbar.hidden = true; return; }
+  tabbar.hidden = false;
+  const s = state.session;
+  const status = teamsStatus().state;
+  const badge = isLocked() ? '🔒' : status === 'ready' ? '✓' : status === 'stale' ? '!' : '';
+  const flow = ['rules', 'result'].includes(active);
+  const tab = (route, label, extra = '') => `
+    <button class="tab ${active === route ? 'on' : ''}" data-go="${route}" aria-current="${active === route ? 'page' : 'false'}">
+      ${TAB_ICON[route]}<span>${label}</span>${extra}
+    </button>`;
+  tabbar.innerHTML = `
+    ${tab('home', 'Home')}
+    ${tab('squad', 'Players')}
+    <button class="tab-main ${flow ? 'on' : ''}" data-go="${s.result ? 'result' : 'pick'}" aria-label="Teams">
+      <span class="tab-bolt">⚡</span><span>Teams</span>${badge ? `<i class="tab-badge ${status}">${badge}</i>` : ''}
+    </button>
+    ${tab('pick', "Who's in", s.picked.length ? `<i class="tab-count">${s.picked.length}</i>` : '')}
+    ${tab('room', 'Room')}`;
 }
 
 function stepper(active) {
@@ -470,8 +515,8 @@ function stepper(active) {
 }
 
 // ---------- routing ----------
-const ROUTES = { home, squad, pick, rules, result };
-const ORDER = { home: 0, squad: 1, pick: 2, rules: 3, result: 4 };
+const ROUTES = { home, squad, pick, rules, result, room: roomScreen };
+const ORDER = { home: 0, squad: 1, pick: 2, rules: 3, result: 4, room: 5 };
 
 function routeFromHash() {
   const r = location.hash.slice(1);
@@ -491,6 +536,7 @@ function show(name, animate = true) {
     const el = ROUTES[name]();
     if (dir) el.classList.add(`enter-${dir}`);
     app.replaceChildren(el);
+    paintTabbar(name);
     window.scrollTo(0, 0);
     if (name === 'result' && state.reveal) { state.reveal = false; requestAnimationFrame(() => { revealTeams(); celebrate(); }); }
   };
@@ -545,7 +591,6 @@ function home() {
   const el = h(`
     <section class="screen home">
       ${appbar('home')}
-      <button class="room-chip" data-room style="--d:0"><span class="mono">Room</span> ${esc(ROOM?.name || '')} <b>#${esc(ROOM?.code || '')}</b></button>
       <div class="hero" style="--d:1">
         ${heroShapes()}
         <svg class="wiggle" viewBox="0 0 280 160" aria-hidden="true"><path d="M8 140 C 50 140, 40 30, 92 44 S 130 140, 172 104 S 206 12, 272 24" fill="none" stroke="var(--wiggle)" stroke-width="16" stroke-linecap="round"/></svg>
@@ -864,6 +909,7 @@ function pick() {
     if (teamsSub) teamsSub.textContent = status === 'ready' ? 'ready' : status === 'stale' ? 'out of date' : 'not made yet';
     el.querySelector('.stepper [data-go="result"]')?.classList.toggle('stale', status === 'stale');
     el.querySelector('[data-banner]').innerHTML = pickBanner();
+    paintTabbar('pick');
     splitBtn.innerHTML = isLocked() ? 'Open teams →' : status === 'none' ? 'Split ⚡' : 'Split again ⚡';
     save();
   };
@@ -1778,10 +1824,113 @@ async function openShareSheet() {
   });
 }
 
-// ---------- entering a room ----------
+// ---------- rooms: forms, gate, Room screen ----------
+const roomApi = async (body) => {
+  const res = await fetch('/api/room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const json = (res.headers.get('Content-Type') || '').includes('json') ? await res.json() : null;
+  return { res, json };
+};
+const DIGITS = /^\d{4,8}$/;
+
+function joinForm(prefix) {
+  return `
+    <form class="room-form" data-form="join">
+      <label class="field"><span class="mono">Room code</span><input id="${prefix}-code" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="4–8 digits" data-code></label>
+      <label class="field"><span class="mono">PIN</span><input id="${prefix}-pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8" placeholder="4–8 digits" data-pin></label>
+      <p class="gate-msg" data-msg hidden></p>
+      <button class="btn" type="submit">Enter room <span class="arrow">→</span></button>
+    </form>`;
+}
+
+function createForm(prefix) {
+  return `
+    <form class="room-form" data-form="create">
+      <label class="field"><span class="mono">Room name</span><input id="${prefix}-name" maxlength="30" placeholder="e.g. Friday Offside crew" data-name></label>
+      <div class="pin-pair">
+        <label class="field"><span class="mono">PIN</span><input id="${prefix}-pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="4–8 digits" data-pin></label>
+        <label class="field"><span class="mono">PIN again</span><input id="${prefix}-pin2" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" data-pin2></label>
+      </div>
+      <details class="more"><summary>Choose your own code</summary>
+        <label class="field"><span class="mono">Room code (4–8 digits)</span><input id="${prefix}-code" inputmode="numeric" maxlength="8" placeholder="leave blank for a random one" data-code></label>
+      </details>
+      <p class="gate-msg" data-msg hidden></p>
+      <button class="btn" type="submit">Create room <span class="arrow">→</span></button>
+      <div data-created hidden></div>
+    </form>`;
+}
+
+// Wire the join/create forms inside `root`.
+function wireRoomForms(root) {
+  const msg = (form, text, bad = true) => {
+    const m = form.querySelector('[data-msg]');
+    m.hidden = !text;
+    m.textContent = text || '';
+    m.classList.toggle('warn', bad);
+  };
+  root.querySelectorAll('[data-form="join"]').forEach((f) => f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const code = f.querySelector('[data-code]').value.trim();
+    const pin = f.querySelector('[data-pin]').value.trim();
+    if (!DIGITS.test(code)) return msg(f, 'Room codes are 4 to 8 digits.');
+    if (!DIGITS.test(pin)) return msg(f, 'PINs are 4 to 8 digits.');
+    if (ROOM?.code === code) return msg(f, 'You\'re already in this room.');
+    msg(f, 'Checking…', false);
+    try {
+      const { res, json } = await roomApi({ action: 'join', code, pin });
+      // No room server here (e.g. running on a computer): keep it on this device.
+      if (!json && res.status === 404) return enterRoom(code, pin, `Room ${code}`);
+      if (!res.ok) return msg(f, json?.error || 'Couldn\'t open that room.');
+      enterRoom(code, pin, json.name);
+    } catch {
+      msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
+    }
+  }));
+  root.querySelectorAll('[data-form="create"]').forEach((f) => f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = f.querySelector('[data-name]').value.trim() || 'Our group';
+    const pin = f.querySelector('[data-pin]').value.trim();
+    const pin2 = f.querySelector('[data-pin2]').value.trim();
+    const code = f.querySelector('[data-code]').value.trim();
+    if (!DIGITS.test(pin)) return msg(f, 'PINs are 4 to 8 digits.');
+    if (pin !== pin2) return msg(f, 'The two PINs don\'t match.');
+    if (code && !DIGITS.test(code)) return msg(f, 'Room codes are 4 to 8 digits.');
+    msg(f, 'Creating…', false);
+    try {
+      const { res, json } = await roomApi({ action: 'create', name, pin, code: code || undefined });
+      let made = json;
+      if (!json && res.status === 404) made = { code: code || String(Math.floor(100000 + Math.random() * 900000)), name };
+      else if (!res.ok) return msg(f, json?.error || 'Couldn\'t create the room.');
+      msg(f, '');
+      f.querySelectorAll('.field, .pin-pair, .more, button[type=submit]').forEach((x) => { x.hidden = true; });
+      const box = f.querySelector('[data-created]');
+      box.hidden = false;
+      box.innerHTML = `
+        <p class="gate-note">Room created. Share the code with your group, and the PIN only with people who should see and edit it.</p>
+        <p class="room-code">${esc(made.code)}</p>
+        <p class="mono">${esc(made.name)}</p>
+        <div class="tile-actions">
+          <button class="btn ghost small" type="button" data-copy><span>Copy code</span></button>
+          <button class="btn" type="button" data-enter>Go to room <span class="arrow">→</span></button>
+        </div>`;
+      rememberRoom({ code: made.code, pin, name: made.name });
+      confettiFrom(box.querySelector('.room-code'), 30, 1);
+      box.querySelector('[data-copy]').addEventListener('click', () => copyText(made.code, 'Code copied'));
+      box.querySelector('[data-enter]').addEventListener('click', () => enterRoom(made.code, pin, made.name));
+    } catch {
+      msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
+    }
+  }));
+}
+
+async function copyText(text, done) {
+  try { await navigator.clipboard.writeText(text); toast(done); } catch { toast(text); }
+}
+
+// First screen when this device isn't in a room yet.
 function gate() {
   const message = raw.get('gameon.gateMessage');
   raw.set('gameon.gateMessage', null);
+  const known = myRooms();
   const el = h(`
     <section class="screen gate">
       <div class="hero" style="--d:1">
@@ -1790,131 +1939,99 @@ function gate() {
         <span class="sticker">Fair teams<br>every week</span>
       </div>
       <div class="gate-card" style="--d:2">
+        ${message ? `<p class="gate-msg warn">${esc(message)}</p>` : ''}
+        ${known.length ? `<div class="known-rooms"><span class="mono">Rooms on this phone</span>${known.map((r) => `
+          <button class="known-room" data-known="${esc(r.code)}"><b>${esc(r.name || 'Room')}</b><span>#${esc(r.code)}</span><i>Open →</i></button>`).join('')}</div>` : ''}
         <div class="seg" role="tablist">
-          <button data-tab="join" class="on">Enter room</button>
+          <button data-tab="join" class="on">Enter a room</button>
           <button data-tab="create">Create a room</button>
         </div>
-        ${message ? `<p class="gate-msg warn">${esc(message)}</p>` : ''}
-        <form data-form="join">
-          <p class="gate-note">Every group has its own room. Ask your organiser for the room code and PIN.</p>
-          <label class="field"><span class="mono">Room code</span><input id="join-code" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="e.g. 9999" data-code></label>
-          <label class="field"><span class="mono">PIN</span><input id="join-pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8" placeholder="4–8 digits" data-pin></label>
-          <p class="gate-msg" data-msg hidden></p>
-          <button class="btn" type="submit">Enter room <span class="arrow">→</span></button>
-        </form>
-        <form data-form="create" hidden>
-          <p class="gate-note">Start a room for your group. You'll get a code to share; keep the PIN for people you trust.</p>
-          <label class="field"><span class="mono">Room name</span><input id="create-name" maxlength="30" placeholder="e.g. Friday Offside crew" data-name></label>
-          <label class="field"><span class="mono">PIN</span><input id="create-pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="4–8 digits" data-pin></label>
-          <label class="field"><span class="mono">PIN again</span><input id="create-pin2" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" data-pin2></label>
-          <label class="field"><span class="mono">Room code <small>(optional, leave blank for a random one)</small></span><input id="create-code" inputmode="numeric" maxlength="8" placeholder="4–8 digits" data-code></label>
-          <p class="gate-msg" data-msg hidden></p>
-          <button class="btn" type="submit">Create room <span class="arrow">→</span></button>
-        </form>
-        <div data-created hidden></div>
+        <div data-pane="join"><p class="gate-note">Every group has its own room. Ask your organiser for the room code and PIN.</p>${joinForm('gate-join')}</div>
+        <div data-pane="create" hidden><p class="gate-note">Start a room for your group. You'll get a code to share.</p>${createForm('gate-create')}</div>
       </div>
     </section>`);
-
-  const msg = (form, text, bad = true) => {
-    const m = form.querySelector('[data-msg]');
-    m.hidden = !text;
-    m.textContent = text || '';
-    m.classList.toggle('warn', bad);
-  };
-  const enter = (code, pin, name) => {
-    raw.set('gameon.room', { code, pin, name });
-    location.hash = 'home';
-    location.reload();
-  };
-  const call = async (body) => {
-    const res = await fetch('/api/room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const json = (res.headers.get('Content-Type') || '').includes('json') ? await res.json() : null;
-    return { res, json };
-  };
-
   el.addEventListener('click', (e) => {
     const tab = e.target.closest('[data-tab]');
-    if (!tab) return;
-    el.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b === tab));
-    el.querySelectorAll('[data-form]').forEach((f) => { f.hidden = f.dataset.form !== tab.dataset.tab; });
-    el.querySelector('[data-created]').hidden = true;
-  });
-
-  el.querySelector('[data-form="join"]').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f = e.currentTarget;
-    const code = f.querySelector('[data-code]').value.trim();
-    const pin = f.querySelector('[data-pin]').value.trim();
-    if (!/^\d{4,8}$/.test(code)) return msg(f, 'Room codes are 4 to 8 digits.');
-    if (!/^\d{4,8}$/.test(pin)) return msg(f, 'PINs are 4 to 8 digits.');
-    msg(f, 'Checking…', false);
-    try {
-      const { res, json } = await call({ action: 'join', code, pin });
-      // No room server here (e.g. running on a computer): keep it on this device.
-      if (!json && res.status === 404) return enter(code, pin, `Room ${code}`);
-      if (!res.ok) return msg(f, json?.error || 'Couldn\'t open that room.');
-      if (json.claimed) raw.set('gameon.gateMessage', null);
-      enter(code, pin, json.name);
-    } catch {
-      msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
+    if (tab) {
+      el.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b === tab));
+      el.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== tab.dataset.tab; });
     }
+    const k = e.target.closest('[data-known]');
+    if (k) { const r = myRooms().find((x) => x.code === k.dataset.known); if (r) enterRoom(r.code, r.pin, r.name); }
   });
-
-  el.querySelector('[data-form="create"]').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f = e.currentTarget;
-    const name = f.querySelector('[data-name]').value.trim() || 'Our group';
-    const pin = f.querySelector('[data-pin]').value.trim();
-    const pin2 = f.querySelector('[data-pin2]').value.trim();
-    const code = f.querySelector('[data-code]').value.trim();
-    if (!/^\d{4,8}$/.test(pin)) return msg(f, 'PINs are 4 to 8 digits.');
-    if (pin !== pin2) return msg(f, 'The two PINs don\'t match.');
-    if (code && !/^\d{4,8}$/.test(code)) return msg(f, 'Room codes are 4 to 8 digits.');
-    msg(f, 'Creating…', false);
-    try {
-      const { res, json } = await call({ action: 'create', name, pin, code: code || undefined });
-      let made = json;
-      if (!json && res.status === 404) made = { code: code || String(Math.floor(100000 + Math.random() * 900000)), name };
-      else if (!res.ok) return msg(f, json?.error || 'Couldn\'t create the room.');
-      f.hidden = true;
-      const box = el.querySelector('[data-created]');
-      box.hidden = false;
-      box.innerHTML = `
-        <p class="gate-note">Room created. Share the code with your group, and the PIN only with people who should edit.</p>
-        <p class="room-code">${esc(made.code)}</p>
-        <p class="mono muted">${esc(made.name)}</p>
-        <div class="tile-actions">
-          <button class="btn ghost small" data-copy><span>Copy code</span></button>
-          <button class="btn" data-enter>Enter room <span class="arrow">→</span></button>
-        </div>`;
-      confettiFrom(box.querySelector('.room-code'), 30, 1);
-      box.querySelector('[data-copy]').addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(made.code); toast('Code copied'); } catch { toast(`Code: ${made.code}`); }
-      });
-      box.querySelector('[data-enter]').addEventListener('click', () => enter(made.code, pin, made.name));
-    } catch {
-      msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
-    }
-  });
+  wireRoomForms(el);
   return el;
 }
 
-function openRoomSheet() {
-  const sheet = openSheet(`
-    <span class="mono">Your room</span>
-    <h2 class="display">${esc(ROOM.name || `Room ${ROOM.code}`)}</h2>
-    <p class="room-code small">${esc(ROOM.code)}</p>
-    <p class="sheet-note">Anyone with this code and the PIN can see and edit this room's squad and teams.</p>
-    <div class="share-opts">
-      <button class="btn paper" data-copy>Copy room code</button>
-      <button class="btn ghost small" data-leave><span>Leave this room</span></button>
-    </div>`);
-  sheet.querySelector('[data-copy]').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(ROOM.code); toast('Code copied'); } catch { toast(`Code: ${ROOM.code}`); }
+// The Room tab: this room, other rooms, joining, creating, leaving.
+function roomScreen() {
+  const others = myRooms().filter((r) => r.code !== ROOM.code);
+  const invite = `Join our football room on Game On ⚽\nRoom code: ${ROOM.code}\n(Ask me for the PIN.)\n${location.origin}`;
+  const el = h(`
+    <section class="screen">
+      ${appbar()}
+      <h1 class="display title" style="--d:1">Room</h1>
+      <section class="card room-card" style="--d:2">
+        <span class="mono muted">You're in</span>
+        <h2 class="room-name">${esc(ROOM.name || `Room ${ROOM.code}`)}</h2>
+        <p class="room-code">${esc(ROOM.code)}</p>
+        <p class="hint">Everyone with this code and the PIN sees the same squad, guests and teams.</p>
+        <div class="tile-actions">
+          <button class="btn paper small" data-copy-code>Copy code</button>
+          <button class="btn small" data-copy-invite>Copy group invite</button>
+        </div>
+      </section>
+      ${others.length ? `
+      <section class="card" style="--d:3">
+        <h2>Your other rooms</h2>
+        <p class="hint">Rooms you've used on this device. Tap to switch.</p>
+        <div class="known-rooms">${others.map((r) => `
+          <button class="known-room" data-known="${esc(r.code)}"><b>${esc(r.name || 'Room')}</b><span>#${esc(r.code)}</span><i>Switch →</i></button>`).join('')}</div>
+      </section>` : ''}
+      <section class="card" style="--d:4">
+        <details class="room-section">
+          <summary><h2>Join another room</h2><span class="mono muted">code + PIN</span></summary>
+          ${joinForm('room-join')}
+        </details>
+      </section>
+      <section class="card" style="--d:5">
+        <details class="room-section">
+          <summary><h2>Create a new room</h2><span class="mono muted">for another group</span></summary>
+          ${createForm('room-create')}
+        </details>
+      </section>
+      <section class="card leave-card" style="--d:6">
+        <h2>Leave this room</h2>
+        <p class="hint">Takes this device out of <b>${esc(ROOM.name || ROOM.code)}</b>. Nothing is deleted: the squad and teams stay in the room for everyone else, and you can come back with the code and PIN.</p>
+        <div data-leave-area><button class="btn ghost small" data-leave-ask><span>Leave room…</span></button></div>
+      </section>
+    </section>`);
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-copy-code]')) return copyText(ROOM.code, 'Code copied');
+    if (e.target.closest('[data-copy-invite]')) return copyText(invite, 'Invite copied. Paste it in the group chat');
+    const k = e.target.closest('[data-known]');
+    if (k) { const r = myRooms().find((x) => x.code === k.dataset.known); if (r) enterRoom(r.code, r.pin, r.name); return; }
+    if (e.target.closest('[data-leave-ask]')) {
+      el.querySelector('[data-leave-area]').innerHTML = `
+        <div class="confirm">
+          <p>Leave <b>${esc(ROOM.name || ROOM.code)}</b> on this device?</p>
+          <label class="check"><input type="checkbox" data-forget> Also forget its PIN on this device</label>
+          <div class="tile-actions">
+            <button class="btn ghost small" data-leave-cancel><span>Cancel</span></button>
+            <button class="btn orange small" data-leave-yes>Leave room</button>
+          </div>
+        </div>`;
+      return;
+    }
+    if (e.target.closest('[data-leave-cancel]')) {
+      el.querySelector('[data-leave-area]').innerHTML = '<button class="btn ghost small" data-leave-ask><span>Leave room…</span></button>';
+      return;
+    }
+    if (e.target.closest('[data-leave-yes]')) leaveRoom(null, el.querySelector('[data-forget]')?.checked);
   });
-  sheet.querySelector('[data-leave]').addEventListener('click', () => leaveRoom());
+  wireRoomForms(el);
+  return el;
 }
-document.addEventListener('click', (e) => { if (e.target.closest('[data-room]')) openRoomSheet(); });
 
 // ---------- boot ----------
 if (!ROOM) {
