@@ -71,15 +71,9 @@ const W = {
 const TAU = 4; // logistic scale: a strength gap of 1 ≈ 56% win chance
 const EXHAUSTIVE_LIMIT = 18;
 
-// Ratings are 1–5, but the steps aren't equal: 1 is clearly weak, and the
-// gaps shrink as ratings rise (3, 4 and 5 are close). Every calculation goes
-// through this curve.
-const CURVE = [1, 1.8, 2.3, 2.6, 2.8];
-export const val = (r) => {
-  const x = Math.min(5, Math.max(1, r)) - 1;
-  const i = Math.min(3, Math.floor(x));
-  return CURVE[i] + (CURVE[i + 1] - CURVE[i]) * (x - i);
-};
+// Ratings are 1–5 with equal steps: 1 is bad, 5 is top. They're mapped onto
+// the 1–2.8 range the rest of the model's weights are tuned for.
+export const val = (r) => 1 + (Math.min(5, Math.max(1, r)) - 1) * 0.45;
 export const MID_RATING = 3;
 export const TOP_RATING = 5;
 
@@ -353,7 +347,7 @@ export class BalanceError extends Error {}
 export function balance(players, opts = {}) {
   const {
     format = 5, together = [], apart = [], keepers = [], keeperMode = 'auto',
-    exclude = null, history = [], rng = Math.random, tolerance = 1,
+    exclude = null, history = [], rng = Math.random, tolerance = 2,
   } = opts;
   const n = players.length;
   if (n < 2) throw new BalanceError('Need at least 2 players.');

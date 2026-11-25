@@ -104,7 +104,7 @@ function normalise(p) {
   const pos = POSITIONS.includes(p.pos) ? p.pos : p.pos === null || p.unrated ? null : legacyPos ?? 'MID';
   const alt = POSITIONS.includes(p.alt) && p.alt !== pos ? p.alt : legacyPos ? legacyAlt : null;
   return {
-    id: String(p.id || uid()), name: String(p.name).slice(0, 18),
+    id: String(p.id || uid()), name: String(p.name).trim().slice(0, 18).toUpperCase(),
     att: clamp(p.att), def: clamp(p.def), phy: clamp(p.phy), fb: clamp(p.fb), gk: clamp(p.gk, 1),
     pos, alt, s: 5, ...(p.guest ? { guest: true } : {}), ...(p.t ? { t: p.t } : {}),
   };
@@ -1759,7 +1759,7 @@ function openPlayerSheet({ player = null, guest = false }) {
       return show(routeFromHash(), false);
     }
     if (e.target.closest('[data-save]')) {
-      draft.name = input.value.trim();
+      draft.name = input.value.trim().toUpperCase();
       if (!draft.name) {
         input.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-8px)' }, { transform: 'translateX(8px)' }, { transform: 'translateX(0)' }], { duration: 260 });
         return input.focus();
