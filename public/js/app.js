@@ -474,6 +474,17 @@ const TAB_ICON = {
   pick: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 9l2 2 4-4M8 15h8"/></svg>',
   room: '<svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.4"/></svg>',
 };
+// A wavy 12-point starburst for the Teams sticker.
+const STARBURST = (() => {
+  const pts = [];
+  for (let i = 0; i < 24; i++) {
+    const r = i % 2 ? 40 : 49;
+    const a = (Math.PI * 2 * i) / 24 - Math.PI / 2;
+    pts.push(`${(50 + r * Math.cos(a)).toFixed(1)} ${(50 + r * Math.sin(a)).toFixed(1)}`);
+  }
+  return `M${pts.join(' L')}Z`;
+})();
+
 function paintTabbar(active) {
   if (!ROOM) { tabbar.hidden = true; return; }
   tabbar.hidden = false;
@@ -489,7 +500,10 @@ function paintTabbar(active) {
     ${tab('home', 'Home')}
     ${tab('squad', 'Players')}
     <button class="tab-main ${flow ? 'on' : ''}" data-go="${s.result ? 'result' : 'pick'}" aria-label="Teams">
-      <span class="tab-bolt">⚡</span><span>Teams</span>${badge ? `<i class="tab-badge ${status}">${badge}</i>` : ''}
+      <span class="tab-vs" aria-hidden="true">
+        <svg viewBox="0 0 100 100"><path d="${STARBURST}"/></svg>
+        <b>VS</b>
+      </span><span class="tab-main-label">Teams</span>${badge ? `<i class="tab-badge ${status}">${badge}</i>` : ''}
     </button>
     ${tab('pick', "Who's in", s.picked.length ? `<i class="tab-count">${s.picked.length}</i>` : '')}
     ${tab('room', 'Room')}`;
@@ -587,7 +601,6 @@ function openSyncSheet() {
 function home() {
   const s = state.session;
   const mi = matchInfo();
-  const words = ['Fair teams', 'Black vs White', 'Friday nights', 'No more arguments', 'Game on'];
   const el = h(`
     <section class="screen home">
       ${appbar('home')}
@@ -615,9 +628,6 @@ function home() {
           </div>`}
       </div>
       ${homeStatus(mi)}
-      <div class="ticker" style="--d:5" aria-hidden="true">
-        <div>${[...words, ...words].map((w) => `<span>${w}</span>`).join('')}</div>
-      </div>
     </section>`);
 
   el.addEventListener('click', (e) => {
