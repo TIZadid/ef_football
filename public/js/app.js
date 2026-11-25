@@ -1,5 +1,5 @@
 import {
-  balance, evaluate, lineup, BalanceError, POSITIONS, isCB, suggestKeepers, keeperScore,
+  balance, evaluate, lineup, BalanceError, POSITIONS, suggestKeepers, keeperScore,
 } from './balance.js';
 import { renderShareImage, shareText } from './share.js';
 import { mergeDocs, FIELDS, RECENT_SIZE } from './sync.js';
@@ -1496,7 +1496,6 @@ function slotHtml(p, keeper) {
     <li><button class="pl slot ${isGk ? 'keeper' : ''}" data-id="${p.id}">
       <span class="nm">${isGk ? '🧤 ' : ''}${esc(p.name)}</span>
       <span class="badges">
-        ${!isGk && isCB(p) ? '<span class="b cb">CB</span>' : ''}
         <span class="b">${isGk ? `GK${p.empty?.includes('gk') ? '?' : p.gk}` : p.pos ?? 'ANY'}</span>
       </span>
     </button></li>`;
