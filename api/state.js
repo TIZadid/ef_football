@@ -1,41 +1,24 @@
-// Shared squad storage for every device, on Upstash Redis (free tier).
-// Connect an Upstash Redis store to the project in the Vercel dashboard;
-// it provides the URL and token below as environment variables.
+// A room's shared data (squad, guests, rules, matchday, this week's teams).
+// Every request carries the room code and PIN in X-Room / X-Pin.
+import { redis, keys, storageReady, authorize, send, fail, readBody } from './_lib.js';
 import { mergeDocs, emptyDoc } from '../public/js/sync.js';
 
-const URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-const KEY = 'gameon:state';
-
-async function redis(command) {
-  const res = await fetch(URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(command),
-  });
-  const json = await res.json();
-  if (json.error) throw new Error(json.error);
-  return json.result;
-}
-
 export default async function handler(req, res) {
-  res.setHeader('Cache-Control', 'no-store');
-  // Devices stamp their edits with this clock so they agree on what came last.
-  res.setHeader('X-Server-Time', String(Date.now()));
-  if (!URL || !TOKEN) return res.status(503).json({ error: 'Storage is not connected yet.' });
+  if (!storageReady()) return send(res, 503, { error: 'Storage is not connected yet.' });
   try {
-    const stored = await redis(['GET', KEY]);
+    const code = String(req.headers['x-room'] ?? '').trim();
+    await authorize(code, String(req.headers['x-pin'] ?? ''));
+    const stored = await redis('GET', keys.state(code));
     const current = stored ? JSON.parse(stored) : emptyDoc();
-    if (req.method === 'GET') return res.status(200).json(current);
+    if (req.method === 'GET') return send(res, 200, current);
     if (req.method === 'POST') {
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-      const merged = mergeDocs(current, body);
-      await redis(['SET', KEY, JSON.stringify(merged)]);
-      return res.status(200).json(merged);
+      const merged = mergeDocs(current, readBody(req));
+      await redis('SET', keys.state(code), JSON.stringify(merged));
+      return send(res, 200, merged);
     }
     res.setHeader('Allow', 'GET, POST');
-    return res.status(405).end();
+    return send(res, 405, { error: 'Use GET or POST.' });
   } catch (err) {
-    return res.status(500).json({ error: String(err.message || err) });
+    return fail(res, err);
   }
 }

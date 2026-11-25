@@ -11,15 +11,20 @@ npm run dev      # http://localhost:8787 (no syncing locally: everything stays i
 npm test         # algorithm and sync tests
 ```
 
-## Syncing across devices
+## Rooms and syncing
 
-The squad, recent guests, matchday settings and house rules sync through `api/state.js`,
-which stores one JSON document in Upstash Redis (free tier). To turn it on:
+Each group has a **room**: a unique 4–8 digit code plus a PIN. The first screen asks
+for both, or lets you create a new room (you get a random code, or pick your own).
+Everything for a room (squad, guests, rules, matchday, this week's teams) syncs
+across devices through `api/state.js`; `api/room.js` creates and opens rooms.
+
+Data is stored in Upstash Redis (free tier). To turn it on:
 
 1. Vercel dashboard → this project → **Storage** → **Create Database** → **Upstash for Redis** (free plan).
 2. Connect it to the project. Vercel adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` automatically.
-3. Redeploy. The app bar shows **Synced** once it's working.
+3. Redeploy. The dot in the top bar shows **Saved** once it's working.
 
-Without storage the app still works, saving on each device only.
+Data from before rooms existed lives in room **9999**. It has no PIN until someone
+enters it: the first PIN used becomes its PIN. Ten wrong PINs lock a room for 15 minutes.
 
-The balancing algorithm lives in `public/js/balance.js`.
+Ratings run from 1 to 5. The balancing algorithm lives in `public/js/balance.js`.

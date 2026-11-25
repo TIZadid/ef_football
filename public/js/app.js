@@ -8,19 +8,36 @@ import { confettiFrom, countUp, heroShapes } from './fx.js';
 const app = document.getElementById('app');
 const sheetRoot = document.getElementById('sheet-root');
 
-// ---------- storage ----------
-const store = {
-  get(key, fallback) {
-    try { const v = localStorage.getItem(`gameon.${key}`); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
-  },
-  set(key, value) {
-    try { localStorage.setItem(`gameon.${key}`, JSON.stringify(value)); } catch { /* private mode */ }
-  },
+// ---------- rooms & storage ----------
+// Each group has a room (a code plus a PIN). This device remembers the room
+// it's in, and keeps a local copy of that room's data under its own prefix.
+const raw = {
+  get(key) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } },
+  set(key, value) { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
 };
+const ROOM = raw.get('gameon.room'); // { code, pin, name } or null
+const LEGACY_ROOM = '9999';
+const LOCAL_KEYS = ['pool', 'session', 'settings', 'history', 'recent', 'deleted', 'recentCleared', 'stamps'];
+// Data saved before rooms existed belongs to room 9999.
+if (ROOM?.code === LEGACY_ROOM && raw.get(`gameon.${LEGACY_ROOM}.pool`) === null && raw.get('gameon.pool') !== null) {
+  for (const k of LOCAL_KEYS) { const v = raw.get(`gameon.${k}`); if (v !== null) raw.set(`gameon.${LEGACY_ROOM}.${k}`, v); }
+}
+const store = {
+  get(key, fallback) { const v = raw.get(`gameon.${ROOM?.code ?? 'none'}.${key}`); return v === null ? fallback : v; },
+  set(key, value) { raw.set(`gameon.${ROOM?.code ?? 'none'}.${key}`, value); },
+};
+const roomHeaders = () => (ROOM ? { 'X-Room': ROOM.code, 'X-Pin': ROOM.pin } : {});
+
+function leaveRoom(message) {
+  raw.set('gameon.room', null);
+  if (message) raw.set('gameon.gateMessage', message);
+  location.hash = '';
+  location.reload();
+}
 
 const RATINGS = [
   ['att', 'ATT', 'Attack', 'Goal threat'],
-  ['def', 'DEF', 'Defense', '3 = centre-back'],
+  ['def', 'DEF', 'Defense', '4+ = centre-back'],
   ['phy', 'PHY', 'Physical', 'Strength & engine'],
   ['fb', 'BCK', 'Falls back', 'Tracks back to help'],
   ['gk', 'GK', 'Goalkeeping', 'Between the sticks'],
@@ -38,7 +55,7 @@ const LEGACY_POS = { wing: ['WING', null], central: ['MID', null], both: ['MID',
 // stats count as tonight's average and the algorithm spreads players with
 // empty stats across the teams. A player with no position (null) simply has
 // no set role.
-const DEFAULTS = { att: 2, def: 2, phy: 2, fb: 2, gk: 1 };
+const DEFAULTS = { att: 3, def: 3, phy: 3, fb: 3, gk: 1 };
 const STAT_KEYS = Object.keys(DEFAULTS);
 const isEmpty = (p, k) => p[k] === null;
 const hasEmpty = (p) => STAT_KEYS.some((k) => isEmpty(p, k));
@@ -63,14 +80,20 @@ function resolveAll(players) {
 
 function normalise(p) {
   // null = deliberately empty; missing = an old record, use the default.
-  const clamp = (v, d = 2) => (v === null || p.unrated ? null : Math.min(3, Math.max(1, Math.round(Number(v) || d))));
+  // Ratings used to be 1–3; players saved then are moved onto 1–5 (1→1, 2→3, 3→5).
+  const old = p.s !== 5;
+  const clamp = (v, d = 3) => {
+    if (v === null || p.unrated) return null;
+    const n = Math.round(Number(v) || (old ? { 3: 2, 1: 1 }[d] ?? 2 : d));
+    return old ? { 1: 1, 2: 3, 3: 5 }[Math.min(3, Math.max(1, n))] : Math.min(5, Math.max(1, n));
+  };
   const [legacyPos, legacyAlt] = LEGACY_POS[p.pos] ?? [];
   const pos = POSITIONS.includes(p.pos) ? p.pos : p.pos === null || p.unrated ? null : legacyPos ?? 'MID';
   const alt = POSITIONS.includes(p.alt) && p.alt !== pos ? p.alt : legacyPos ? legacyAlt : null;
   return {
     id: String(p.id || uid()), name: String(p.name).slice(0, 18),
     att: clamp(p.att), def: clamp(p.def), phy: clamp(p.phy), fb: clamp(p.fb), gk: clamp(p.gk, 1),
-    pos, alt, ...(p.guest ? { guest: true } : {}), ...(p.t ? { t: p.t } : {}),
+    pos, alt, s: 5, ...(p.guest ? { guest: true } : {}), ...(p.t ? { t: p.t } : {}),
   };
 }
 
@@ -103,13 +126,13 @@ const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const buzz = (pattern) => navigator.vibrate && navigator.vibrate(pattern);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const posTag = (p) => (p.pos ? `${p.pos}${p.alt ? ` · ${p.alt}` : ''}` : p.guest && hasEmpty(p) ? '?' : 'ANY');
-const keeperLikely = (p) => p.pos === 'GK' || p.alt === 'GK' || p.gk === 3;
+const keeperLikely = (p) => p.pos === 'GK' || p.alt === 'GK' || p.gk >= 4;
 
 // An overall rating, 40–99, for the player cards.
 function ovr(p) {
-  const r = (k) => p[k] ?? 2;
-  const outfield = 40 + ((r('att') + r('def') + 0.8 * r('phy') + 0.7 * r('fb') - 3.5) / 7) * 59;
-  const keeper = p.pos === 'GK' ? 40 + (((p.gk ?? 1.5) - 1) / 2) * 59 : 0;
+  const r = (k) => p[k] ?? 3;
+  const outfield = 40 + ((r('att') + r('def') + 0.8 * r('phy') + 0.7 * r('fb') - 3.5) / 14) * 59;
+  const keeper = p.pos === 'GK' ? 40 + (((p.gk ?? 2) - 1) / 4) * 59 : 0;
   return Math.round(Math.max(outfield, keeper));
 }
 
@@ -233,7 +256,8 @@ async function pushState() {
   setSync('syncing');
   try {
     // keepalive lets the request finish even if the page is being hidden.
-    const res = await fetch('/api/state', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(localDoc()) });
+    const res = await fetch('/api/state', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', ...roomHeaders() }, body: JSON.stringify(localDoc()) });
+    if (await accessLost(res)) return;
     if (!res.ok) throw new Error(res.status);
     readClock(res);
     if (applyDoc(await res.json())) refreshScreen();
@@ -243,9 +267,20 @@ async function pushState() {
   }
 }
 
+// The server said this room's code or PIN no longer works.
+async function accessLost(res) {
+  const json = (res.headers.get('Content-Type') || '').includes('json');
+  if (!json || ![401, 404, 429].includes(res.status)) return false;
+  const { error } = await res.json().catch(() => ({}));
+  if (res.status === 429) { setSync('offline', error || 'Too many wrong PINs. Try again later.'); return true; }
+  leaveRoom(error || 'That room code or PIN doesn\'t work any more.');
+  return true;
+}
+
 async function pullState() {
   try {
-    const res = await fetch('/api/state', { cache: 'no-store' });
+    const res = await fetch('/api/state', { cache: 'no-store', headers: roomHeaders() });
+    if (await accessLost(res)) return;
     // No storage connected (or running locally): keep everything on this device.
     if (res.status === 503) return setSync('local', 'The site is running, but its storage isn\'t connected. In Vercel: Storage → connect Upstash Redis to this project, then redeploy.');
     if (res.status === 404) return setSync('local', 'This copy of the site has no storage server (for example when running it on your computer). Changes stay on this device.');
@@ -399,7 +434,7 @@ const changeText = ({ added, removed }) => [added && `${added} added`, removed &
 
 // ---------- shared bits ----------
 const bars = (p) => `<div class="bars">${RATINGS.map(([k, short]) => `
-  <div class="${isEmpty(p, k) ? 'unk' : ''}"><span>${short}</span><p>${isEmpty(p, k) ? '<i></i><b>?</b><i></i>' : [1, 2, 3].map((n) => `<i class="${p[k] >= n ? 'f' : ''}"></i>`).join('')}</p></div>`).join('')}</div>`;
+  <div class="${isEmpty(p, k) ? 'unk' : ''}"><span>${short}</span><p>${isEmpty(p, k) ? '<i></i><b>?</b><i></i>' : [1, 2, 3, 4, 5].map((n) => `<i class="${p[k] >= n ? 'f' : ''}"></i>`).join('')}</p></div>`).join('')}</div>`;
 
 function appbar(active) {
   const flow = ['pick', 'rules', 'result'].includes(active);
@@ -492,7 +527,7 @@ function openSyncSheet() {
     <h2 class="display">${state.sync === 'synced' ? 'All saved' : state.sync === 'syncing' ? 'Saving…' : state.sync === 'offline' ? 'Offline' : 'Not syncing'}</h2>
     <p class="sheet-note">${esc(syncReason)}</p>
     ${ago ? `<p class="sheet-note">Last saved ${ago < 60 ? `${ago}s` : `${Math.round(ago / 60)} min`} ago.</p>` : ''}
-    <p class="sheet-note">Synced: the squad, past guests, who's in, tonight's guests, rules, the teams and the matchday.</p>
+    <p class="sheet-note">Room <b>#${esc(ROOM?.code ?? '')}</b>. Synced: the squad, past guests, who's in, tonight's guests, rules, the teams and the matchday.</p>
     <div class="actions"><button class="btn" data-retry>Sync now</button></div>`);
   sheet.querySelector('[data-retry]').addEventListener('click', async () => {
     closeSheet();
@@ -510,6 +545,7 @@ function home() {
   const el = h(`
     <section class="screen home">
       ${appbar('home')}
+      <button class="room-chip" data-room style="--d:0"><span class="mono">Room</span> ${esc(ROOM?.name || '')} <b>#${esc(ROOM?.code || '')}</b></button>
       <div class="hero" style="--d:1">
         ${heroShapes()}
         <svg class="wiggle" viewBox="0 0 280 160" aria-hidden="true"><path d="M8 140 C 50 140, 40 30, 92 44 S 130 140, 172 104 S 206 12, 272 24" fill="none" stroke="var(--wiggle)" stroke-width="16" stroke-linecap="round"/></svg>
@@ -728,20 +764,6 @@ async function importSquad(e) {
   } catch {
     toast('That file isn\'t a squad');
   }
-}
-
-// The demo squad was removed. Clear any demo players still saved in the
-// browser, matching name, ratings and positions exactly so real players stay.
-const DEMO_PLAYERS = new Set([
-  'Arif,3,1,2,1,1,WING,ST', 'Sabbir,2,3,3,2,1,CB,', 'Nayeem,1,3,2,3,2,CB,MID', 'Rakib,3,2,2,2,1,MID,ST',
-  'Fahim,2,2,1,3,3,GK,MID', 'Tanvir,1,2,3,2,2,WING,', 'Imran,2,3,2,1,1,CB,', 'Shuvo,3,1,1,1,1,ST,WING',
-  'Rony,2,2,3,3,1,MID,WING', 'Mahin,1,1,2,2,3,GK,', 'Sakib,3,2,3,2,1,MID,', 'Jamil,2,1,1,2,2,WING,MID',
-]);
-function removeDemoPlayers() {
-  const key = (p) => [p.name, p.att, p.def, p.phy, p.fb, p.gk, p.pos, p.alt ?? ''].join(',');
-  const before = state.pool.length;
-  state.pool = state.pool.filter((p) => !DEMO_PLAYERS.has(key(p)));
-  if (state.pool.length !== before) prune();
 }
 
 // ---------- tickets ----------
@@ -1600,15 +1622,15 @@ function openPlayerSheet({ player = null, guest = false }) {
   const draft = player
     ? { ...player }
     : isGuest
-      ? { id: uid(), name: '', att: null, def: null, phy: null, fb: null, gk: null, pos: null, alt: null }
-      : { id: uid(), name: '', att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: 'MID', alt: null };
+      ? { id: uid(), name: '', att: null, def: null, phy: null, fb: null, gk: null, pos: null, alt: null, s: 5 }
+      : { id: uid(), name: '', att: 3, def: 3, phy: 3, fb: 3, gk: 1, pos: 'MID', alt: null, s: 5 };
   const showDetails = !(isGuest && !player);
   const noneLabel = isGuest ? '?' : 'None';
   const posButtons = () => ['', ...POSITIONS].map((v) => `
     <button type="button" data-v="${v}" class="${(draft.pos ?? '') === v ? 'on' : ''}">${v || noneLabel}</button>`).join('');
   const altButtons = () => ['', ...POSITIONS].map((v) => `
     <button type="button" data-v="${v}" class="${(draft.alt ?? '') === v ? 'on' : ''}" ${v && v === draft.pos ? 'disabled' : ''}>${v || '—'}</button>`).join('');
-  const pips = (k, label) => [...(allowEmpty ? [''] : []), 1, 2, 3].map((n) => {
+  const pips = (k, label) => [...(allowEmpty ? [''] : []), 1, 2, 3, 4, 5].map((n) => {
     const on = n === '' ? draft[k] === null : draft[k] !== null && draft[k] >= n;
     return `<button type="button" data-n="${n}" class="${n === '' ? 'unk' : ''} ${on ? 'f' : ''}" aria-label="${label} ${n || 'unknown'}">${n || '?'}</button>`;
   }).join('');
@@ -1756,12 +1778,153 @@ async function openShareSheet() {
   });
 }
 
+// ---------- entering a room ----------
+function gate() {
+  const message = raw.get('gameon.gateMessage');
+  raw.set('gameon.gateMessage', null);
+  const el = h(`
+    <section class="screen gate">
+      <div class="hero" style="--d:1">
+        ${heroShapes()}
+        <div class="badge-logo"><h1 class="headline"><span>Game</span><span>On</span></h1></div>
+        <span class="sticker">Fair teams<br>every week</span>
+      </div>
+      <div class="gate-card" style="--d:2">
+        <div class="seg" role="tablist">
+          <button data-tab="join" class="on">Enter room</button>
+          <button data-tab="create">Create a room</button>
+        </div>
+        ${message ? `<p class="gate-msg warn">${esc(message)}</p>` : ''}
+        <form data-form="join">
+          <p class="gate-note">Every group has its own room. Ask your organiser for the room code and PIN.</p>
+          <label class="field"><span class="mono">Room code</span><input id="join-code" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="e.g. 9999" data-code></label>
+          <label class="field"><span class="mono">PIN</span><input id="join-pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8" placeholder="4–8 digits" data-pin></label>
+          <p class="gate-msg" data-msg hidden></p>
+          <button class="btn" type="submit">Enter room <span class="arrow">→</span></button>
+        </form>
+        <form data-form="create" hidden>
+          <p class="gate-note">Start a room for your group. You'll get a code to share; keep the PIN for people you trust.</p>
+          <label class="field"><span class="mono">Room name</span><input id="create-name" maxlength="30" placeholder="e.g. Friday Offside crew" data-name></label>
+          <label class="field"><span class="mono">PIN</span><input id="create-pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="4–8 digits" data-pin></label>
+          <label class="field"><span class="mono">PIN again</span><input id="create-pin2" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" data-pin2></label>
+          <label class="field"><span class="mono">Room code <small>(optional, leave blank for a random one)</small></span><input id="create-code" inputmode="numeric" maxlength="8" placeholder="4–8 digits" data-code></label>
+          <p class="gate-msg" data-msg hidden></p>
+          <button class="btn" type="submit">Create room <span class="arrow">→</span></button>
+        </form>
+        <div data-created hidden></div>
+      </div>
+    </section>`);
+
+  const msg = (form, text, bad = true) => {
+    const m = form.querySelector('[data-msg]');
+    m.hidden = !text;
+    m.textContent = text || '';
+    m.classList.toggle('warn', bad);
+  };
+  const enter = (code, pin, name) => {
+    raw.set('gameon.room', { code, pin, name });
+    location.hash = 'home';
+    location.reload();
+  };
+  const call = async (body) => {
+    const res = await fetch('/api/room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const json = (res.headers.get('Content-Type') || '').includes('json') ? await res.json() : null;
+    return { res, json };
+  };
+
+  el.addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-tab]');
+    if (!tab) return;
+    el.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b === tab));
+    el.querySelectorAll('[data-form]').forEach((f) => { f.hidden = f.dataset.form !== tab.dataset.tab; });
+    el.querySelector('[data-created]').hidden = true;
+  });
+
+  el.querySelector('[data-form="join"]').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    const code = f.querySelector('[data-code]').value.trim();
+    const pin = f.querySelector('[data-pin]').value.trim();
+    if (!/^\d{4,8}$/.test(code)) return msg(f, 'Room codes are 4 to 8 digits.');
+    if (!/^\d{4,8}$/.test(pin)) return msg(f, 'PINs are 4 to 8 digits.');
+    msg(f, 'Checking…', false);
+    try {
+      const { res, json } = await call({ action: 'join', code, pin });
+      // No room server here (e.g. running on a computer): keep it on this device.
+      if (!json && res.status === 404) return enter(code, pin, `Room ${code}`);
+      if (!res.ok) return msg(f, json?.error || 'Couldn\'t open that room.');
+      if (json.claimed) raw.set('gameon.gateMessage', null);
+      enter(code, pin, json.name);
+    } catch {
+      msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
+    }
+  });
+
+  el.querySelector('[data-form="create"]').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    const name = f.querySelector('[data-name]').value.trim() || 'Our group';
+    const pin = f.querySelector('[data-pin]').value.trim();
+    const pin2 = f.querySelector('[data-pin2]').value.trim();
+    const code = f.querySelector('[data-code]').value.trim();
+    if (!/^\d{4,8}$/.test(pin)) return msg(f, 'PINs are 4 to 8 digits.');
+    if (pin !== pin2) return msg(f, 'The two PINs don\'t match.');
+    if (code && !/^\d{4,8}$/.test(code)) return msg(f, 'Room codes are 4 to 8 digits.');
+    msg(f, 'Creating…', false);
+    try {
+      const { res, json } = await call({ action: 'create', name, pin, code: code || undefined });
+      let made = json;
+      if (!json && res.status === 404) made = { code: code || String(Math.floor(100000 + Math.random() * 900000)), name };
+      else if (!res.ok) return msg(f, json?.error || 'Couldn\'t create the room.');
+      f.hidden = true;
+      const box = el.querySelector('[data-created]');
+      box.hidden = false;
+      box.innerHTML = `
+        <p class="gate-note">Room created. Share the code with your group, and the PIN only with people who should edit.</p>
+        <p class="room-code">${esc(made.code)}</p>
+        <p class="mono muted">${esc(made.name)}</p>
+        <div class="tile-actions">
+          <button class="btn ghost small" data-copy><span>Copy code</span></button>
+          <button class="btn" data-enter>Enter room <span class="arrow">→</span></button>
+        </div>`;
+      confettiFrom(box.querySelector('.room-code'), 30, 1);
+      box.querySelector('[data-copy]').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(made.code); toast('Code copied'); } catch { toast(`Code: ${made.code}`); }
+      });
+      box.querySelector('[data-enter]').addEventListener('click', () => enter(made.code, pin, made.name));
+    } catch {
+      msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
+    }
+  });
+  return el;
+}
+
+function openRoomSheet() {
+  const sheet = openSheet(`
+    <span class="mono">Your room</span>
+    <h2 class="display">${esc(ROOM.name || `Room ${ROOM.code}`)}</h2>
+    <p class="room-code small">${esc(ROOM.code)}</p>
+    <p class="sheet-note">Anyone with this code and the PIN can see and edit this room's squad and teams.</p>
+    <div class="share-opts">
+      <button class="btn paper" data-copy>Copy room code</button>
+      <button class="btn ghost small" data-leave><span>Leave this room</span></button>
+    </div>`);
+  sheet.querySelector('[data-copy]').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(ROOM.code); toast('Code copied'); } catch { toast(`Code: ${ROOM.code}`); }
+  });
+  sheet.querySelector('[data-leave]').addEventListener('click', () => leaveRoom());
+}
+document.addEventListener('click', (e) => { if (e.target.closest('[data-room]')) openRoomSheet(); });
+
 // ---------- boot ----------
-removeDemoPlayers();
-prune();
-rollover();
-syncTeamsWithPicks();
-save();
-takeSnap();
-show(routeFromHash(), false);
-pullState();
+if (!ROOM) {
+  app.replaceChildren(gate());
+} else {
+  prune();
+  rollover();
+  syncTeamsWithPicks();
+  save();
+  takeSnap();
+  show(routeFromHash(), false);
+  pullState();
+}

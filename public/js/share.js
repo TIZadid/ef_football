@@ -119,7 +119,7 @@ export async function renderShareImage({ lineups, names, balance, match, format 
       ctx.fillStyle = sub ? 'rgba(255,248,202,0.7)' : COLORS.paper;
       const label = `${isKeeper ? '🧤 ' : ''}${p.name.toUpperCase()}`;
       ctx.fillText(fit(ctx, label, colW - 120), t ? x + colW - 28 : x + 28, y + 50);
-      const tag = isKeeper ? 'GK' : sub ? '' : (p.def === 3 || p.pos === 'CB' || p.alt === 'CB') ? 'CB' : '';
+      const tag = isKeeper ? 'GK' : sub ? '' : (p.def >= 4 || p.pos === 'CB' || p.alt === 'CB') ? 'CB' : '';
       if (tag) {
         ctx.font = '700 20px "Space Mono", monospace';
         const tw = ctx.measureText(tag).width + 16;

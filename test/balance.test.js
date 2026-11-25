@@ -4,7 +4,9 @@ import { balance, evaluate, lineup, BalanceError, isCB, isMid, unknown, suggestK
 
 let seed = 1;
 const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-const P = (id, att, def, phy, fb, gk, pos = 'MID', alt = null) => ({ id, name: id, att, def, phy, fb, gk, pos, alt });
+// Fixtures are written on the old 1–3 scale and moved to 1–5 (1→1, 2→3, 3→5).
+const up = (v) => ({ 1: 1, 2: 3, 3: 5 })[v] ?? v;
+const P = (id, att, def, phy, fb, gk, pos = 'MID', alt = null) => ({ id, name: id, att: up(att), def: up(def), phy: up(phy), fb: up(fb), gk: up(gk), pos, alt });
 
 const squad = [
   P('a', 3, 1, 2, 1, 1, 'WING', 'ST'), P('b', 3, 2, 3, 2, 1, 'ST'), P('c', 1, 3, 3, 3, 2, 'CB'),
@@ -59,7 +61,7 @@ test('DEF 3 counts as a CB even without the CB position', () => {
 });
 
 test('warns when there are not enough CBs', () => {
-  const few = squad.map((p) => ({ ...p, def: Math.min(p.def, 2), pos: p.pos === 'CB' ? 'MID' : p.pos, alt: p.alt === 'CB' ? null : p.alt }));
+  const few = squad.map((p) => ({ ...p, def: Math.min(p.def, 3), pos: p.pos === 'CB' ? 'MID' : p.pos, alt: p.alt === 'CB' ? null : p.alt }));
   const r = balance(few, { rng });
   assert.ok(r.warnings.some((w) => w.includes('CB')));
 });
@@ -142,7 +144,7 @@ test('evaluate flags broken rules after edits', () => {
 });
 
 test('unrated guests (no position, average stats) never fill the CB or MID slot', () => {
-  const guest = { id: 'g', name: 'g', att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: null, alt: null, unrated: true };
+  const guest = { id: 'g', name: 'g', att: 3, def: 3, phy: 3, fb: 3, gk: 1, pos: null, alt: null, unrated: true };
   assert.ok(!isCB(guest) && !isMid(guest));
   const r = balance([...squad.slice(0, 9), guest], { rng });
   for (const u of r.lineups) {
@@ -151,7 +153,7 @@ test('unrated guests (no position, average stats) never fill the CB or MID slot'
   }
 });
 
-const blank = (id) => ({ id, name: id, att: 2, def: 2, phy: 2, fb: 2, gk: 1, pos: null, alt: null, empty: ['att', 'def', 'phy', 'fb', 'gk'] });
+const blank = (id) => ({ id, name: id, att: 3, def: 3, phy: 3, fb: 3, gk: 1, pos: null, alt: null, empty: ['att', 'def', 'phy', 'fb', 'gk'] });
 
 test('fully unknown players are split across the teams', () => {
   for (let k = 0; k < 15; k++) {

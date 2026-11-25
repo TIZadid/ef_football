@@ -1,7 +1,7 @@
 // Team balancing, modelled the way a manager reads a small-sided game.
 //
 // A player: { id, name, att, def, phy, fb, gk, pos, alt, empty? }
-//   ratings are 1–3 (the app fills empty stats with the group average and
+//   ratings are 1–5 (the app fills empty stats with the group average and
 //   lists them in `empty`); pos is the main position and alt an optional
 //   backup, each one of POSITIONS (pos may be null when unknown).
 //
@@ -27,7 +27,7 @@
 //   - pinned keepers end up on different teams, and start in goal
 // Structural rules for each team (enforced whenever any split can
 // satisfy them; otherwise the least-bad split wins and a warning is returned):
-//   - a CB: CB as main/backup position, or DEF 3
+//   - a CB: CB as main/backup position, or DEF 4+
 //   - a central player: MID as main/backup position
 // Soft goals (the cost function):
 //   - expected strength equal (the main term), then each unit equal
@@ -71,12 +71,20 @@ const W = {
 const TAU = 4; // logistic scale: a strength gap of 1 ≈ 56% win chance
 const EXHAUSTIVE_LIMIT = 18;
 
-// Ratings are 1–3, but the steps aren't equal: 1 is clearly weak, while 2
-// and 3 are close. Every calculation goes through this curve.
-export const val = (r) => (r <= 2 ? 1 + (r - 1) * 1.3 : 2.3 + (r - 2) * 0.5);
+// Ratings are 1–5, but the steps aren't equal: 1 is clearly weak, and the
+// gaps shrink as ratings rise (3, 4 and 5 are close). Every calculation goes
+// through this curve.
+const CURVE = [1, 1.8, 2.3, 2.6, 2.8];
+export const val = (r) => {
+  const x = Math.min(5, Math.max(1, r)) - 1;
+  const i = Math.min(3, Math.floor(x));
+  return CURVE[i] + (CURVE[i + 1] - CURVE[i]) * (x - i);
+};
+export const MID_RATING = 3;
+export const TOP_RATING = 5;
 
 export const plays = (p, pos) => (p.pos === pos ? 1 : p.alt === pos ? 0.5 : 0);
-export const isCB = (p) => p.def === 3 || plays(p, 'CB') > 0;
+export const isCB = (p) => p.def >= 4 || plays(p, 'CB') > 0;
 export const isMid = (p) => plays(p, 'MID') > 0;
 // Role-free individual quality, used for star balance and picking starters.
 export const impact = (p) => val(p.att) + val(p.def) + 0.8 * val(p.phy) + 0.7 * val(p.fb);
@@ -87,7 +95,7 @@ export const keeperWeight = (format) => (format <= 6 ? 2.2 : format <= 8 ? 1.8 :
 
 // How suited a player is to going in goal: GK rating, plus a bonus for
 // wanting to play there (an unknown rating counts as 1.5).
-export const keeperScore = (p) => val(p.empty?.includes('gk') ? 1.5 : p.gk) + 1.2 * plays(p, 'GK');
+export const keeperScore = (p) => val(p.empty?.includes('gk') ? 2 : p.gk) + 1.2 * plays(p, 'GK');
 
 // Who goes in goal: whoever makes the team strongest, the way a manager
 // decides. Weighs their keeping (with a bonus for wanting to play there)
@@ -216,11 +224,11 @@ export function teamStats(starters, keeper, { format = 5, team = starters } = {}
   // Tracking back of the non-CB outfielders, and how good the best CB is.
   const front = outfield.filter((p) => roles.get(p).role !== 'CB');
   const cbsList = outfield.filter((p) => roles.get(p).role === 'CB');
-  s.track = front.length ? front.reduce((sum, p) => sum + val(p.fb), 0) / front.length : val(2);
-  s.cbQ = cbsList.length ? Math.max(...cbsList.map((p) => val(p.def) + 0.3 * (val(p.phy) - val(2)))) : 1;
+  s.track = front.length ? front.reduce((sum, p) => sum + val(p.fb), 0) / front.length : val(MID_RATING);
+  s.cbQ = cbsList.length ? Math.max(...cbsList.map((p) => val(p.def) + 0.3 * (val(p.phy) - val(MID_RATING)))) : 1;
   // A front line that doesn't track back leaves the CB exposed: the weaker
   // the CB, the more it leaks.
-  s.defU -= W.leak * Math.max(0, val(2) - s.track) * Math.max(0, val(3) - s.cbQ);
+  s.defU -= W.leak * Math.max(0, val(MID_RATING) - s.track) * Math.max(0, val(TOP_RATING) - s.cbQ);
   s.back = s.defU + K * s.gk;
   s.expected = s.atk + s.defU + 0.6 * s.eng + K * s.gk;
   s.total = s.expected;
@@ -285,7 +293,7 @@ export function evaluate(teamA, teamB, opts = {}) {
   });
   const { cost, violations, stats } = score(ups, teams, useKeepers, format);
   const warnings = [];
-  if (violations.cb) warnings.push('A team has no CB (CB position or DEF 3).');
+  if (violations.cb) warnings.push('A team has no CB (CB position or DEF 4+).');
   if (violations.mid) warnings.push('A team has no MID.');
   const side = new Map();
   teamA.forEach((p) => side.set(p.id, 0));
