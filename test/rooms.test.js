@@ -77,3 +77,32 @@ test('the pre-rooms data becomes room 9999, claimed by the first PIN', async () 
   const got = await call(state, { method: 'GET', headers: { 'x-room': '9999', 'x-pin': '4321' } });
   assert.equal(got.body.pool[0].name, 'Abir');
 });
+
+test('changing the PIN: old PIN stops working, new one works', async () => {
+  const { code } = (await create({ name: 'a', pin: '1111' })).body;
+  assert.equal((await call(room, { body: { action: 'change-pin', code, pin: '9999', newPin: '2222' } })).status, 401);
+  assert.equal((await call(room, { body: { action: 'change-pin', code, pin: '1111', newPin: '2222' } })).status, 200);
+  assert.equal((await join(code, '1111')).status, 401);
+  assert.equal((await join(code, '2222')).status, 200);
+});
+
+test('a forgotten PIN is reset with the recovery key, which is then replaced', async () => {
+  const made = (await create({ name: 'a', pin: '1111' })).body;
+  assert.match(made.recoveryKey, /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  const reset = (key, newPin) => call(room, { body: { action: 'reset-pin', code: made.code, recoveryKey: key, newPin } });
+  assert.equal((await reset('AAAA-BBBB-CCCC', '3333')).status, 401);
+  const ok = await reset(made.recoveryKey.toLowerCase().replace(/-/g, ' '), '3333'); // forgiving about case and dashes
+  assert.equal(ok.status, 200);
+  assert.equal((await join(made.code, '3333')).status, 200);
+  assert.equal((await reset(made.recoveryKey, '4444')).status, 401); // the old key is used up
+  assert.equal((await reset(ok.body.recoveryKey, '4444')).status, 200);
+});
+
+test('a room without a recovery key can get one from someone who knows the PIN', async () => {
+  db.set('gameon:state', JSON.stringify({ pool: [] }));
+  await join('9999', '1234');
+  const noKey = await call(room, { body: { action: 'reset-pin', code: '9999', recoveryKey: 'AAAA-BBBB-CCCC', newPin: '5555' } });
+  assert.equal(noKey.status, 400);
+  const { recoveryKey } = (await call(room, { body: { action: 'recovery-key', code: '9999', pin: '1234' } })).body;
+  assert.equal((await call(room, { body: { action: 'reset-pin', code: '9999', recoveryKey, newPin: '5555' } })).status, 200);
+});

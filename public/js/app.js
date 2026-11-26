@@ -286,7 +286,10 @@ async function accessLost(res) {
   if (!json || ![401, 404, 429].includes(res.status)) return false;
   const { error } = await res.json().catch(() => ({}));
   if (res.status === 429) { setSync('offline', error || 'Too many wrong PINs. Try again later.'); return true; }
-  leaveRoom(error || 'That room code or PIN doesn\'t work any more.');
+  if (res.status === 401 && ROOM) raw.set('gameon.gateCode', ROOM.code);
+  leaveRoom(res.status === 401
+    ? 'The PIN for this room has changed. Enter the new PIN to get back in.'
+    : error || 'That room code or PIN doesn\'t work any more.');
   return true;
 }
 
@@ -1888,6 +1891,22 @@ function createForm(prefix) {
     </form>`;
 }
 
+function resetForm(prefix) {
+  return `
+    <form class="room-form" data-form="reset">
+      <p class="gate-note">Forgot the PIN? Use the room's recovery key to set a new one.</p>
+      <label class="field"><span class="mono">Room code</span><input id="${prefix}-code" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="4–8 digits" data-code></label>
+      <label class="field"><span class="mono">Recovery key</span><input id="${prefix}-key" autocomplete="off" autocapitalize="characters" maxlength="16" placeholder="XXXX-XXXX-XXXX" data-key></label>
+      <div class="pin-pair">
+        <label class="field"><span class="mono">New PIN</span><input id="${prefix}-pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="4–8 digits" data-pin></label>
+        <label class="field"><span class="mono">New PIN again</span><input id="${prefix}-pin2" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" data-pin2></label>
+      </div>
+      <p class="gate-msg" data-msg hidden></p>
+      <button class="btn" type="submit">Reset PIN <span class="arrow">→</span></button>
+      <div data-created hidden></div>
+    </form>`;
+}
+
 // Wire the join/create forms inside `root`.
 function wireRoomForms(root) {
   const msg = (form, text, bad = true) => {
@@ -1914,6 +1933,67 @@ function wireRoomForms(root) {
       msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
     }
   }));
+  root.querySelectorAll('[data-form="reset"]').forEach((f) => f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const code = f.querySelector('[data-code]').value.trim();
+    const recoveryKey = f.querySelector('[data-key]').value.trim();
+    const pin = f.querySelector('[data-pin]').value.trim();
+    const pin2 = f.querySelector('[data-pin2]').value.trim();
+    if (!DIGITS.test(code)) return msg(f, 'Room codes are 4 to 8 digits.');
+    if (recoveryKey.replace(/[^a-z0-9]/gi, '').length !== 12) return msg(f, 'Recovery keys look like XXXX-XXXX-XXXX.');
+    if (!DIGITS.test(pin)) return msg(f, 'PINs are 4 to 8 digits.');
+    if (pin !== pin2) return msg(f, 'The two PINs don\'t match.');
+    msg(f, 'Checking…', false);
+    try {
+      const { res, json } = await roomApi({ action: 'reset-pin', code, recoveryKey, newPin: pin });
+      if (!json) return msg(f, 'Resetting a PIN needs the online server.');
+      if (!res.ok) return msg(f, json.error || 'Couldn\'t reset the PIN.');
+      msg(f, '');
+      updateSavedPin(code, pin);
+      f.querySelectorAll('.gate-note, .field, .pin-pair, button[type=submit]').forEach((x) => { x.hidden = true; });
+      const box = f.querySelector('[data-created]');
+      box.hidden = false;
+      box.innerHTML = `
+        <p class="gate-note">PIN reset for <b>${esc(json.name)}</b>. Everyone else will need the new PIN.</p>
+        ${recoveryBox(json.recoveryKey, 'Your old recovery key no longer works. Save this new one somewhere safe.')}
+        <div class="tile-actions"><button class="btn" type="button" data-enter>Go to room <span class="arrow">→</span></button></div>`;
+      box.querySelector('[data-enter]').addEventListener('click', () => enterRoom(code, pin, json.name));
+    } catch {
+      msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
+    }
+  }));
+  root.querySelectorAll('[data-form="change-pin"]').forEach((f) => f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const current = f.querySelector('[data-current]').value.trim();
+    const pin = f.querySelector('[data-pin]').value.trim();
+    const pin2 = f.querySelector('[data-pin2]').value.trim();
+    if (!DIGITS.test(pin)) return msg(f, 'The new PIN must be 4 to 8 digits.');
+    if (pin !== pin2) return msg(f, 'The two new PINs don\'t match.');
+    msg(f, 'Saving…', false);
+    try {
+      const { res, json } = await roomApi({ action: 'change-pin', code: ROOM.code, pin: current, newPin: pin });
+      if (!json) return msg(f, 'Changing the PIN needs the online server.');
+      if (!res.ok) return msg(f, json.error || 'Couldn\'t change the PIN.');
+      updateSavedPin(ROOM.code, pin);
+      f.reset();
+      msg(f, 'PIN changed. Other devices will be asked for the new PIN.', false);
+      toast('PIN changed');
+    } catch {
+      msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
+    }
+  }));
+  root.querySelectorAll('[data-new-key]').forEach((b) => b.addEventListener('click', async () => {
+    const area = b.closest('[data-key-area]');
+    b.disabled = true;
+    try {
+      const { res, json } = await roomApi({ action: 'recovery-key', code: ROOM.code, pin: ROOM.pin });
+      if (!json || !res.ok) { b.disabled = false; return toast(json?.error || 'Making a recovery key needs the online server'); }
+      area.innerHTML = recoveryBox(json.recoveryKey, 'Any older recovery key for this room no longer works. Save this one somewhere safe; it won\'t be shown again.');
+    } catch {
+      b.disabled = false;
+      toast('Couldn\'t reach the server');
+    }
+  }));
   root.querySelectorAll('[data-form="create"]').forEach((f) => f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = f.querySelector('[data-name]').value.trim() || 'Our group';
@@ -1937,6 +2017,7 @@ function wireRoomForms(root) {
         <p class="gate-note">Room created. Share the code with your group, and the PIN only with people who should see and edit it.</p>
         <p class="room-code">${esc(made.code)}</p>
         <p class="mono">${esc(made.name)}</p>
+        ${made.recoveryKey ? recoveryBox(made.recoveryKey, 'If anyone forgets the PIN, this key resets it. Save it somewhere safe, like your notes. It won\'t be shown again.') : ''}
         <div class="tile-actions">
           <button class="btn ghost small" type="button" data-copy><span>Copy code</span></button>
           <button class="btn" type="button" data-enter>Go to room <span class="arrow">→</span></button>
@@ -1949,6 +2030,24 @@ function wireRoomForms(root) {
       msg(f, 'Couldn\'t reach the server. Check your connection and try again.');
     }
   }));
+}
+
+// A recovery key, shown once with a copy button.
+const recoveryBox = (key, note) => `
+  <div class="recovery">
+    <span class="mono">Recovery key</span>
+    <p class="recovery-key">${esc(key)}</p>
+    <p class="recovery-note">${note}</p>
+    <button class="btn ghost small" type="button" data-copy-key="${esc(key)}"><span>Copy recovery key</span></button>
+  </div>`;
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-copy-key]');
+  if (b) copyText(b.dataset.copyKey, 'Recovery key copied. Keep it somewhere safe');
+});
+
+function updateSavedPin(code, pin) {
+  raw.set('gameon.rooms', myRooms().map((r) => (r.code === code ? { ...r, pin } : r)));
+  if (ROOM?.code === code) { ROOM.pin = pin; raw.set('gameon.room', ROOM); }
 }
 
 async function copyText(text, done) {
@@ -1975,7 +2074,9 @@ function gate() {
           <button data-tab="join" class="on">Enter a room</button>
           <button data-tab="create">Create a room</button>
         </div>
-        <div data-pane="join"><p class="gate-note">Every group has its own room. Ask your organiser for the room code and PIN.</p>${joinForm('gate-join')}</div>
+        <div data-pane="join"><p class="gate-note">Every group has its own room. Ask your organiser for the room code and PIN.</p>${joinForm('gate-join')}
+          <button class="link-btn" type="button" data-show-reset>Forgot the PIN?</button></div>
+        <div data-pane="reset" hidden>${resetForm('gate-reset')}<button class="link-btn" type="button" data-tab-back>← Back to entering a room</button></div>
         <div data-pane="create" hidden><p class="gate-note">Start a room for your group. You'll get a code to share.</p>${createForm('gate-create')}</div>
       </div>
     </section>`);
@@ -1987,7 +2088,19 @@ function gate() {
     }
     const k = e.target.closest('[data-known]');
     if (k) { const r = myRooms().find((x) => x.code === k.dataset.known); if (r) enterRoom(r.code, r.pin, r.name); }
+    if (e.target.closest('[data-show-reset]')) {
+      el.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== 'reset'; });
+      const code = el.querySelector('#gate-join-code').value;
+      if (code) el.querySelector('#gate-reset-code').value = code;
+    }
+    if (e.target.closest('[data-tab-back]')) {
+      el.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== 'join'; });
+      el.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === 'join'));
+    }
   });
+  const lastCode = raw.get('gameon.gateCode');
+  raw.set('gameon.gateCode', null);
+  if (lastCode) el.querySelector('#gate-join-code').value = lastCode;
   wireRoomForms(el);
   return el;
 }
@@ -2029,7 +2142,26 @@ function roomScreen() {
           ${createForm('room-create')}
         </details>
       </section>
-      <section class="card leave-card" style="--d:6">
+      <section class="card" style="--d:6">
+        <details class="room-section">
+          <summary><h2>PIN & recovery</h2><span class="mono muted">change or reset</span></summary>
+          <form class="room-form" data-form="change-pin">
+            <p class="hint">Change the PIN everyone uses to open this room. Other devices will be asked for the new one.</p>
+            <label class="field"><span class="mono">Current PIN</span><input id="cp-current" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8" data-current></label>
+            <div class="pin-pair">
+              <label class="field"><span class="mono">New PIN</span><input id="cp-pin" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" placeholder="4–8 digits" data-pin></label>
+              <label class="field"><span class="mono">New PIN again</span><input id="cp-pin2" type="password" inputmode="numeric" autocomplete="new-password" maxlength="8" data-pin2></label>
+            </div>
+            <p class="gate-msg" data-msg hidden></p>
+            <button class="btn small" type="submit">Change PIN</button>
+          </form>
+          <div class="key-section" data-key-area>
+            <p class="hint">A <b>recovery key</b> resets the PIN if everyone forgets it (use "Forgot the PIN?" on the entry screen). Making a new one replaces the old one.</p>
+            <button class="btn ghost small" type="button" data-new-key><span>Make a recovery key</span></button>
+          </div>
+        </details>
+      </section>
+      <section class="card leave-card" style="--d:7">
         <h2>Leave this room</h2>
         <p class="hint">Takes this device out of <b>${esc(ROOM.name || ROOM.code)}</b>. Nothing is deleted: the squad and teams stay in the room for everyone else, and you can come back with the code and PIN.</p>
         <div data-leave-area><button class="btn ghost small" data-leave-ask><span>Leave room…</span></button></div>

@@ -310,6 +310,17 @@ button[disabled] { cursor: default; }
 .confirm { display: grid; gap: 10px; padding: 12px; border-radius: 12px; background: rgba(138, 21, 23, 0.25); }
 .confirm p { margin: 0; }
 
+/* PIN reset & recovery keys */
+.recovery { display: grid; gap: 6px; margin: 12px 0; padding: 12px; border-radius: 12px; border: 2px dashed currentColor; }
+.recovery .mono { opacity: 0.7; }
+.recovery-key { margin: 0; font-family: var(--mono); font-weight: 700; font-size: 22px; letter-spacing: 0.08em; }
+.recovery-note { margin: 0; font-size: 13px; opacity: 0.8; }
+.recovery .btn { justify-self: start; }
+.link-btn { margin-top: 10px; font-size: 14px; text-decoration: underline; text-underline-offset: 3px; opacity: 0.8; }
+.link-btn:hover { opacity: 1; }
+.key-section { margin-top: 16px; padding-top: 14px; border-top: 1.5px dashed var(--line); }
+.room-form .gate-msg:not(.warn) { color: inherit; opacity: 0.85; }
+
 /* ---------- rooms ---------- */
 .gate .hero { margin-top: 6vh; }
 .gate-card { padding: 18px; border-radius: 18px; background: var(--paper); color: var(--ink); border: 2px solid var(--ink); box-shadow: 6px 6px 0 var(--accent-2); display: grid; gap: 4px; }
@@ -880,3 +891,6 @@ button.tile:active { transform: scale(0.97); }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
   .ticker div, .sticker { animation: none; }
 }
+
+/* Outline buttons on the light entry card need dark ink. */
+.gate-card .btn.ghost { --fg: var(--ink); border-color: var(--ink); }

@@ -27,4 +27,10 @@ Data is stored in Upstash Redis (free tier). To turn it on:
 Data from before rooms existed lives in room **9999**. It has no PIN until someone
 enters it: the first PIN used becomes its PIN. Ten wrong PINs lock a room for 15 minutes.
 
+**Changing or resetting a PIN.** On the Room screen, "PIN & recovery" changes the PIN
+(other devices are asked for the new one) and makes a **recovery key**. New rooms get a
+recovery key when they're created. If everyone forgets the PIN, "Forgot the PIN?" on
+the entry screen sets a new one with the room code and recovery key; the used key is
+replaced with a fresh one. Wrong keys count toward the same 15-minute lockout.
+
 Ratings run from 1 to 5. The balancing algorithm lives in `public/js/balance.js`.
