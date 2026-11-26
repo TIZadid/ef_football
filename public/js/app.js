@@ -649,6 +649,9 @@ function home() {
   return el;
 }
 
+// Our sister site for finding keepers and opponents.
+const KHELBI_NAKI_URL = 'https://khelbinaki.zlabz.workers.dev';
+
 // The home menu: current teams first, then setup and the player pool.
 function homeStatus(mi) {
   const s = state.session;
@@ -703,7 +706,16 @@ function homeStatus(mi) {
         <span class="tile-sub">${guestsCount ? plural(guestsCount, 'past guest') : 'no past guests'}</span>
       </button>
     </section>
-    ${s.lastGame ? `<p class="last-game mono muted">Last game ${fmtDate(parseIso(s.lastGame.match))}${s.lastGame.balance ? ` · ${s.lastGame.balance}% balanced` : ''}</p>` : ''}`;
+    ${s.lastGame ? `<p class="last-game mono muted">Last game ${fmtDate(parseIso(s.lastGame.match))}${s.lastGame.balance ? ` · ${s.lastGame.balance}% balanced` : ''}</p>` : ''}
+    <a class="partner" href="${KHELBI_NAKI_URL}" target="_blank" rel="noopener" style="--d:4">
+      <span class="partner-ball" aria-hidden="true">⚽</span>
+      <span class="partner-text">
+        <span class="mono">Short a keeper or need an opponent?</span>
+        <b>Find them on Khelbi Naki</b>
+        <small>Free futsal board for Bangladesh · GK Lagbe · Opponent Lagbe</small>
+      </span>
+      <span class="partner-go" aria-hidden="true">↗</span>
+    </a>`;
 }
 
 function openMatchSheet(mi) {
