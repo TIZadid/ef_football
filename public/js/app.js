@@ -721,8 +721,8 @@ function homeStatus(mi) {
         <span class="partner-word">Khelbi <em>Naki?</em></span>
       </span>
       <span class="partner-head">Need a goalkeeper, or a team to play against?</span>
-      <span class="partner-sub">Post on Bangladesh's free futsal board and settle it on WhatsApp. No sign-up.</span>
-      <span class="partner-cta">Find one on Khelbi Naki <span aria-hidden="true">↗</span></span>
+      <span class="partner-sub">Bangladesh's free futsal board. No sign-up.</span>
+      <span class="partner-cta">Open Khelbi Naki <span aria-hidden="true">↗</span></span>
     </a>`;
 }
 

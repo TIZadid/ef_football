@@ -363,30 +363,34 @@ button.tile:active { transform: scale(0.97); }
   .teams-tile:hover { box-shadow: 9px 9px 0 var(--accent-2); }
 }
 
-/* sister-site link on home, in Khelbi Naki's own colours */
+/* sister-site link on home: our background, Khelbi Naki's lime for its name */
 .partner {
-  --kn-bg: #03110b; --kn-card: #071a12; --kn-lime: #a8e23a; --kn-text: #eaf3ee; --kn-muted: #9fb5aa;
-  display: grid; gap: 8px; margin-top: 16px; padding: 16px 18px; border-radius: 18px; text-decoration: none;
-  background: radial-gradient(circle at 100% 0%, rgba(168, 226, 58, 0.18), transparent 55%), var(--kn-bg);
-  color: var(--kn-text); border: 2px solid var(--kn-lime); box-shadow: 5px 5px 0 rgba(168, 226, 58, 0.35);
-  transition: transform 0.25s var(--ease-spring), box-shadow 0.25s;
+  --kn-lime: #a8e23a;
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 12px; margin-top: 14px;
+  padding: 12px 14px; border-radius: 14px; text-decoration: none; color: var(--paper);
+  background: transparent; border: 1.5px dashed rgba(168, 226, 58, 0.5);
+  transition: transform 0.25s var(--ease-spring), border-color 0.2s;
 }
-.partner-brand { display: flex; align-items: center; gap: 10px; }
-.partner-logo { width: 34px; height: 34px; flex: none; animation: spin-slow 14s linear infinite; }
-.partner-word { font-family: var(--logo); font-size: 22px; text-transform: uppercase; letter-spacing: 0.02em; color: var(--kn-text); }
+.partner-brand { grid-column: 1; display: flex; align-items: center; gap: 7px; }
+.partner-logo { width: 22px; height: 22px; flex: none; animation: spin-slow 14s linear infinite; }
+.partner-word { font-family: var(--logo); font-size: 15px; text-transform: uppercase; letter-spacing: 0.02em; }
 .partner-word em { font-style: normal; color: var(--kn-lime); }
-.partner-head { font-family: var(--cond); font-size: 22px; line-height: 1.1; text-transform: uppercase; letter-spacing: 0.01em; }
-.partner-sub { font-size: 14px; color: var(--kn-muted); }
+.partner-head { grid-column: 1; font-family: var(--cond); font-size: 16px; line-height: 1.15; text-transform: uppercase; letter-spacing: 0.01em; }
+.partner-sub { grid-column: 1; font-size: 12px; color: var(--muted); }
 .partner-cta {
-  justify-self: start; margin-top: 4px; padding: 9px 14px; border-radius: 12px;
-  background: var(--kn-lime); color: var(--kn-bg); font-family: var(--cond); font-size: 17px; text-transform: uppercase; letter-spacing: 0.03em;
+  grid-column: 2; grid-row: 1 / span 3; align-self: center; padding: 7px 11px; border-radius: 10px; white-space: nowrap;
+  background: var(--kn-lime); color: #03110b; font-family: var(--cond); font-size: 14px; text-transform: uppercase; letter-spacing: 0.03em;
 }
 .partner-cta span { display: inline-block; transition: transform 0.25s var(--ease-spring); }
 .partner:active { transform: scale(0.98); }
 @media (hover: hover) and (pointer: fine) {
-  .partner:hover { transform: translate(-2px, -3px); box-shadow: 8px 8px 0 rgba(168, 226, 58, 0.45); }
-  .partner:hover .partner-cta span { transform: translate(3px, -3px); }
+  .partner:hover { transform: translateY(-2px); border-color: var(--kn-lime); border-style: solid; }
+  .partner:hover .partner-cta span { transform: translate(2px, -2px); }
   .partner:hover .partner-logo { animation-duration: 2.5s; }
+}
+@media (max-width: 420px) {
+  .partner { grid-template-columns: 1fr; }
+  .partner-cta { grid-column: 1; grid-row: auto; justify-self: start; margin-top: 4px; }
 }
 @media (prefers-reduced-motion: reduce) { .partner-logo { animation: none; } }
 
