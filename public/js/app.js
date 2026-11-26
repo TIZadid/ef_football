@@ -708,13 +708,21 @@ function homeStatus(mi) {
     </section>
     ${s.lastGame ? `<p class="last-game mono muted">Last game ${fmtDate(parseIso(s.lastGame.match))}${s.lastGame.balance ? ` · ${s.lastGame.balance}% balanced` : ''}</p>` : ''}
     <a class="partner" href="${KHELBI_NAKI_URL}" target="_blank" rel="noopener" style="--d:4">
-      <span class="partner-ball" aria-hidden="true">⚽</span>
-      <span class="partner-text">
-        <span class="mono">Short a keeper or need an opponent?</span>
-        <b>Find them on Khelbi Naki</b>
-        <small>Free futsal board for Bangladesh · GK Lagbe · Opponent Lagbe</small>
+      <span class="partner-brand">
+        <svg class="partner-logo" viewBox="0 0 64 64" aria-hidden="true">
+          <circle cx="32" cy="32" r="21" fill="#a8e23a"/>
+          <g stroke="#03110b" stroke-width="2.6" stroke-linecap="round">
+            <line x1="32" y1="24.5" x2="32" y2="11"/><line x1="39.1" y1="29.7" x2="52" y2="25.5"/>
+            <line x1="36.4" y1="38.1" x2="44.3" y2="49"/><line x1="27.6" y1="38.1" x2="19.7" y2="49"/>
+            <line x1="24.9" y1="29.7" x2="12" y2="25.5"/>
+          </g>
+          <polygon points="32,24.5 39.1,29.7 36.4,38.1 27.6,38.1 24.9,29.7" fill="#03110b" stroke="#03110b" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+        <span class="partner-word">Khelbi <em>Naki?</em></span>
       </span>
-      <span class="partner-go" aria-hidden="true">↗</span>
+      <span class="partner-head">Need a goalkeeper, or a team to play against?</span>
+      <span class="partner-sub">Post on Bangladesh's free futsal board and settle it on WhatsApp. No sign-up.</span>
+      <span class="partner-cta">Find one on Khelbi Naki <span aria-hidden="true">↗</span></span>
     </a>`;
 }
 
